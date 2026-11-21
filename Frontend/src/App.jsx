@@ -1,45 +1,34 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowDown,
-  ArrowRight,
+  Activity,
   AudioLines,
-  BadgeCheck,
+  Bell,
+  Camera,
   Check,
+  ChevronDown,
   ChevronRight,
-  CircleHelp,
   ClipboardList,
-  Crosshair,
-  FileVideo,
+  Grid2X2,
+  Info,
   LayoutDashboard,
   LoaderCircle,
-  ScanLine,
-  ShieldCheck,
-  Sparkles,
+  Mic2,
+  MoreHorizontal,
+  Search,
+  Settings2,
+  Shield,
   Square,
-  UploadCloud,
   Video,
+  Volume2,
+  VolumeX,
+  X,
 } from "lucide-react";
 
 const DRILLS = [
-  {
-    value: "high_leg_march",
-    label: "High Leg March",
-    detail: "Attention & marching",
-    icon: "01",
-  },
-  {
-    value: "salute",
-    label: "NCC Salute",
-    detail: "Posture & hand position",
-    icon: "02",
-  },
-  {
-    value: "turn_right",
-    label: "Right Turn",
-    detail: "Dahine Mur",
-    icon: "03",
-  },
-  { value: "turn_left", label: "Left Turn", detail: "Baen Mur", icon: "04" },
+  { value: "salute", label: "Salute", short: "SAL" },
+  { value: "high_leg_march", label: "High Leg Marching", short: "MAR" },
+  { value: "turn_right", label: "Right Turn", short: "RT" },
+  { value: "turn_left", label: "Left Turn", short: "LT" },
 ];
 
 const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:5000";
@@ -47,7 +36,7 @@ const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:5000";
 function App() {
   const [file, setFile] = useState(null);
   const [selectedDrills, setSelectedDrills] = useState([]);
-  const [mode, setMode] = useState("upload");
+  const [mode, setMode] = useState("live");
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState("");
   const [recording, setRecording] = useState(false);
@@ -57,19 +46,40 @@ function App() {
   const [voiceLoading, setVoiceLoading] = useState(false);
   const [voiceError, setVoiceError] = useState("");
   const [inputError, setInputError] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [audioPrompts, setAudioPrompts] = useState(true);
+  const [filePreviewUrl, setFilePreviewUrl] = useState("");
   const [dragging, setDragging] = useState(false);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const recorderRef = useRef(null);
   const chunksRef = useRef([]);
   const fileInputRef = useRef(null);
-  const resultsRef = useRef(null);
   const cameraRequestRef = useRef(0);
 
+  const visibleDrills = useMemo(
+    () =>
+      DRILLS.filter((drill) =>
+        drill.label.toLowerCase().includes(searchQuery.toLowerCase()),
+      ),
+    [searchQuery],
+  );
+
   useEffect(() => {
-    if (cameraReady && videoRef.current)
+    if (cameraReady && videoRef.current) {
       videoRef.current.srcObject = streamRef.current;
+    }
   }, [cameraReady]);
+
+  useEffect(() => {
+    if (!file) {
+      setFilePreviewUrl("");
+      return undefined;
+    }
+    const url = URL.createObjectURL(file);
+    setFilePreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
 
   useEffect(
     () => () => {
@@ -97,7 +107,6 @@ function App() {
 
   const startCamera = async () => {
     const request = ++cameraRequestRef.current;
-    setMode("live");
     setCameraError("");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -113,7 +122,7 @@ function App() {
     } catch {
       if (request === cameraRequestRef.current) {
         setCameraError(
-          "Could not access your camera. Check your browser permissions and try again.",
+          "Camera access is unavailable. Check your browser permissions and try again.",
         );
       }
     }
@@ -127,17 +136,50 @@ function App() {
     ) {
       setFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
-      setInputError("Please choose an MP4 or WebM video.");
+      setInputError("Choose an MP4 or WebM video to continue.");
       return;
     }
     setFile(selectedFile);
     setInputError("");
+    setFeedback("");
+    setImageSource(null);
+  };
+
+  const playVoiceReport = async (reportText = feedback) => {
+    if (!audioPrompts || voiceLoading || !reportText) return;
+    setVoiceLoading(true);
+    setVoiceError("");
+    let audioUrl;
+    try {
+      const response = await fetch(`${API_URL}/generate_polly_voice`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          report_text: reportText.replace(/[^a-zA-Z0-9.,;!?()\s]/g, ""),
+        }),
+      });
+      if (!response.ok) throw new Error("Voice report is unavailable.");
+      audioUrl = URL.createObjectURL(await response.blob());
+      const audio = new Audio(audioUrl);
+      const cleanup = () => {
+        URL.revokeObjectURL(audioUrl);
+        setVoiceLoading(false);
+      };
+      audio.onended = cleanup;
+      audio.onerror = cleanup;
+      await audio.play();
+    } catch {
+      if (audioUrl) URL.revokeObjectURL(audioUrl);
+      setVoiceLoading(false);
+      setVoiceError("Voice feedback could not be played. Please try again.");
+    }
   };
 
   const analyze = async (videoFile) => {
     if (!videoFile || selectedDrills.length === 0) return;
     setLoading(true);
     setVoiceError("");
+    setInputError("");
     setFeedback("");
     setImageSource(null);
     const formData = new FormData();
@@ -149,24 +191,17 @@ function App() {
         body: formData,
       });
       const data = await response.json();
-      if (!response.ok || !data.success)
+      if (!response.ok || !data.success) {
         throw new Error(data.error || "Unable to analyze this video.");
+      }
       setFeedback(data.feedback);
       setImageSource(data.annotated_image_b64 || null);
     } catch (error) {
       setFeedback(
-        `Analysis failed: ${error.message}. Please check that the analysis service is running and try again.`,
+        `Analysis failed: ${error.message}. Check that the analysis service is running, then try again.`,
       );
     } finally {
       setLoading(false);
-      setTimeout(
-        () =>
-          resultsRef.current?.scrollIntoView({
-            behavior: "smooth",
-            block: "start",
-          }),
-        100,
-      );
     }
   };
 
@@ -184,43 +219,12 @@ function App() {
           type: recorder.mimeType || "video/webm",
         });
         stopCamera();
-        setMode("upload");
         analyze(video);
       };
       recorder.start();
       setRecording(true);
     } catch {
       setCameraError("Recording is not supported by this browser or camera.");
-    }
-  };
-
-  const playVoiceReport = async () => {
-    if (voiceLoading) return;
-    setVoiceLoading(true);
-    setVoiceError("");
-    let url;
-    try {
-      const response = await fetch(`${API_URL}/generate_polly_voice`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          report_text: feedback.replace(/[^a-zA-Z0-9.,;!?()\s]/g, ""),
-        }),
-      });
-      if (!response.ok) throw new Error("Voice report is unavailable.");
-      url = URL.createObjectURL(await response.blob());
-      const audio = new Audio(url);
-      const cleanup = () => {
-        URL.revokeObjectURL(url);
-        setVoiceLoading(false);
-      };
-      audio.onended = cleanup;
-      audio.onerror = cleanup;
-      await audio.play();
-    } catch {
-      if (url) URL.revokeObjectURL(url);
-      setVoiceLoading(false);
-      setVoiceError("Could not play the voice report. Please try again.");
     }
   };
 
@@ -232,466 +236,674 @@ function App() {
     );
   };
 
+  const switchMode = (nextMode) => {
+    if (nextMode === mode) return;
+    stopCamera();
+    setMode(nextMode);
+    setCameraError("");
+  };
+
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <a className="brand" href="#top" aria-label="NCC Drill AI home">
-          <span className="brand-mark">
+    <div className="ops-dashboard" id="dashboard">
+      <aside className="ops-sidebar">
+        <a
+          href="#dashboard"
+          className="ops-brand"
+          aria-label="NCC Drill Analyzer home"
+        >
+          <span className="ops-brand-mark">
             <img src="/ncc_logo.png" alt="" />
           </span>
-          <span>
-            <strong>
-              NCC <span>DRILL AI</span>
-            </strong>
-            <small>THE CADET'S COMPANION</small>
+          <span className="ops-brand-name">
+            NCC DRILL
+            <br />
+            ANALYZER
           </span>
         </a>
-        <div className="sidebar-label">WORKSPACE</div>
-        <nav className="side-nav" aria-label="Main navigation">
-          <a className="active" href="#top">
-            <LayoutDashboard size={18} /> Dashboard{" "}
-            <ChevronRight className="nav-arrow" size={16} />
+
+        <nav className="ops-nav" aria-label="Workspace navigation">
+          <a className="ops-nav-link active" href="#dashboard">
+            <Grid2X2 size={16} /> Dashboard
           </a>
-          <a href="#analyzer">
-            <ScanLine size={18} /> Drill Analyzer
-          </a>
-          <a href="#results">
-            <ClipboardList size={18} /> Analysis Report
-          </a>
-          <a href="#guide">
-            <CircleHelp size={18} /> How it works
-          </a>
-        </nav>
-        <div className="sidebar-bottom">
-          <div className="side-motto">
-            <span className="motto-icon">
-              <ShieldCheck size={19} />
-            </span>
-            <div>
-              <strong>Unity & Discipline</strong>
-              <small>In every step forward.</small>
-            </div>
-          </div>
-          <div className="side-footer">
-            BUILT FOR CADETS <span>✦</span> BUILT FOR GROWTH
-          </div>
-        </div>
-      </aside>
-
-      <div className="main-wrap" id="top">
-        <header className="topbar">
-          <div className="breadcrumb">
-            <span>Workspace</span>
-            <ChevronRight size={14} />
-            <strong>Dashboard</strong>
-          </div>
-          <div className="topbar-right">
-            <span className="topbar-motto">
-              UNITY <i>•</i> DISCIPLINE <i>•</i> EXCELLENCE
-            </span>
-            <span className="cadet-avatar">NC</span>
-            <span className="cadet-label">
-              <strong>Cadet Portal</strong>
-              <small>Ready to train</small>
-            </span>
-          </div>
-        </header>
-
-        <main className="page-content">
-          <div className="welcome-row">
-            <div>
-              <div className="eyebrow">
-                <span></span> YOUR TRAINING SPACE
-              </div>
-              <h1>
-                Every step counts, Cadet<span className="heading-dot">.</span>
-              </h1>
-              <p>Train with purpose. Improve with every drill.</p>
-            </div>
-            <div className="welcome-badge">
-              <Sparkles size={15} /> YOUR AI TRAINING PARTNER
-            </div>
-          </div>
-
-          <section className="hero" aria-label="Drill training introduction">
-            <div className="hero-image"></div>
-            <div className="hero-shade"></div>
-            <div className="hero-content">
-              <div className="hero-tag">
-                <span></span> THE PATH TO PRECISION
-              </div>
-              <h2>
-                Discipline in motion.
-                <br />
-                <em>Excellence in every drill.</em>
-              </h2>
-              <p>
-                Take your training further with AI-powered insights made for NCC
-                cadets.
-              </p>
-              <a href="#analyzer" className="hero-button">
-                Start your analysis <ArrowRight size={16} />
-              </a>
-            </div>
-            <div className="hero-side-note">
-              <span>01 / TRAIN WITH PURPOSE</span>
-              <div></div>
-              <strong>
-                BETTER
-                <br />
-                EVERY DAY.
-              </strong>
-            </div>
-            <div className="hero-index">
-              <span>01</span>
-              <span></span> THE DRILL ANALYZER
-            </div>
-          </section>
-
-          <div className="section-heading" id="analyzer">
-            <div>
-              <div className="eyebrow">
-                <span></span> LET'S GET STARTED
-              </div>
-              <h2>Analyze your drill</h2>
-              <p>A little practice goes a long way. Let's make yours count.</p>
-            </div>
-            <div className="section-note">
-              <Crosshair size={16} /> YOUR TRAINING, YOUR PROGRESS
-            </div>
-          </div>
-
-          <div className="workspace-grid">
-            <section className="panel upload-panel">
-              <div className="panel-heading">
-                <div className="step-number">01</div>
-                <div>
-                  <h3>Add your video</h3>
-                  <p>Choose how you'd like to capture your drill.</p>
-                </div>
-                <Video className="panel-heading-icon" size={20} />
-              </div>
-              <div className="mode-tabs" role="group" aria-label="Video source">
-                <button
-                  type="button"
-                  className={mode === "upload" ? "selected" : ""}
-                  onClick={() => {
-                    stopCamera();
-                    setMode("upload");
-                    setCameraError("");
-                  }}
-                  disabled={loading}
-                >
-                  <UploadCloud size={16} /> Upload video
-                </button>
-                <button
-                  type="button"
-                  className={mode === "live" ? "selected" : ""}
-                  onClick={() => {
-                    if (mode !== "live") startCamera();
-                  }}
-                  disabled={loading}
-                >
-                  <Video size={16} /> Live recording
-                </button>
-              </div>
-              {mode === "upload" ? (
-                <>
-                  <div
-                    className={`dropzone ${dragging ? "dragging" : ""}`}
-                    onDragOver={(event) => {
-                      event.preventDefault();
-                      setDragging(true);
-                    }}
-                    onDragLeave={() => setDragging(false)}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      setDragging(false);
-                      selectFile(event.dataTransfer.files[0]);
-                    }}
-                  >
-                    <input
-                      ref={fileInputRef}
-                      id="video-upload"
-                      type="file"
-                      accept="video/mp4,video/webm,.mp4,.webm"
-                      onChange={(event) => selectFile(event.target.files[0])}
-                      disabled={loading}
-                    />
-                    <div className="upload-icon">
-                      <UploadCloud size={24} strokeWidth={1.6} />
-                    </div>
-                    <strong>{file ? file.name : "Drop your video here"}</strong>
-                    <p>
-                      {file
-                        ? "Your video is ready for analysis."
-                        : "or browse files from your device"}
-                    </p>
-                    <button
-                      type="button"
-                      className="browse-button"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={loading}
-                    >
-                      {file ? "Change video" : "Browse files"}{" "}
-                      <ArrowRight size={14} />
-                    </button>
-                    <small>SUPPORTED FORMATS: MP4, WEBM</small>
-                  </div>
-                  <div className="upload-tip">
-                    <span>
-                      <Sparkles size={15} />
-                    </span>
-                    <p>
-                      <strong>For best results</strong> Make sure your full body
-                      is visible and the area is well-lit.
-                    </p>
-                  </div>
-                </>
-              ) : (
-                <div className="live-area">
-                  <div className="camera-view">
-                    <video
-                      ref={videoRef}
-                      autoPlay
-                      playsInline
-                      muted
-                      aria-label="Live camera preview"
-                    />
-                    {!cameraReady && (
-                      <div className="camera-placeholder">
-                        {cameraError
-                          ? "Camera unavailable"
-                          : "Connecting to camera..."}
-                      </div>
-                    )}
-                    {recording && (
-                      <span className="recording-indicator">
-                        <span></span> RECORDING
-                      </span>
-                    )}
-                  </div>
-                  {cameraError ? (
-                    <div className="camera-message" role="alert">
-                      {cameraError}{" "}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          stopCamera();
-                          startCamera();
-                        }}
-                      >
-                        Try again
-                      </button>
-                    </div>
-                  ) : (
-                    <p className="camera-hint">
-                      {recording
-                        ? "Perform your drill, then stop to analyze."
-                        : "Position yourself so your full body is visible."}
-                    </p>
-                  )}
-                  <button
-                    type="button"
-                    className="record-button"
-                    disabled={
-                      !cameraReady ||
-                      loading ||
-                      (!recording && !selectedDrills.length)
-                    }
-                    onClick={() =>
-                      recording ? recorderRef.current?.stop() : startRecording()
-                    }
-                  >
-                    {recording ? (
-                      <>
-                        <Square size={15} fill="currentColor" /> Stop & analyze
-                      </>
-                    ) : (
-                      <>
-                        <span className="record-dot"></span> Start recording
-                      </>
-                    )}
-                  </button>
-                </div>
-              )}
-              {inputError && (
-                <p className="input-error" role="alert">
-                  {inputError}
-                </p>
-              )}
-            </section>
-
-            <section className="panel drills-panel">
-              <div className="panel-heading">
-                <div className="step-number">02</div>
-                <div>
-                  <h3>Choose your drills</h3>
-                  <p>Select one or more commands to analyze.</p>
-                </div>
-                <Crosshair className="panel-heading-icon" size={20} />
-              </div>
-              <div className="drill-list">
-                {DRILLS.map((drill) => (
-                  <label
-                    key={drill.value}
-                    className={`drill-option ${selectedDrills.includes(drill.value) ? "checked" : ""}`}
-                  >
+          <div className="ops-nav-group" id="drill-selection">
+            <a className="ops-nav-link" href="#drill-list">
+              <Activity size={16} /> Select Drill{" "}
+              <ChevronDown className="ops-nav-chevron" size={14} />
+            </a>
+            <div className="ops-drill-nav" id="drill-list">
+              {visibleDrills.length ? (
+                visibleDrills.map((drill) => (
+                  <label className="ops-drill-link" key={drill.value}>
                     <input
                       type="checkbox"
                       checked={selectedDrills.includes(drill.value)}
                       onChange={() => toggleDrill(drill.value)}
                       disabled={loading || recording}
                     />
-                    <span className="drill-icon">{drill.icon}</span>
-                    <span className="drill-copy">
-                      <strong>{drill.label}</strong>
-                      <small>{drill.detail}</small>
-                    </span>
-                    <span className="custom-check">
-                      <Check size={13} strokeWidth={3} />
-                    </span>
+                    <span>{drill.label}</span>
+                    {selectedDrills.includes(drill.value) && (
+                      <Check size={13} />
+                    )}
                   </label>
-                ))}
-              </div>
-              <div className="selection-count">
-                <span>
-                  <span className="count-dot"></span> {selectedDrills.length}{" "}
-                  {selectedDrills.length === 1 ? "DRILL" : "DRILLS"} SELECTED
-                </span>
-                <span>MULTIPLE SELECTION ALLOWED</span>
-              </div>
-              {mode === "upload" ? (
-                <button
-                  type="button"
-                  className="analyze-button"
-                  onClick={() => analyze(file)}
-                  disabled={loading || !file || !selectedDrills.length}
-                >
-                  {loading ? (
-                    <>
-                      <LoaderCircle className="spin" size={17} /> Analyzing your
-                      drill...
-                    </>
-                  ) : (
-                    <>
-                      Analyze my drill <ArrowRight size={17} />
-                    </>
-                  )}
-                </button>
+                ))
               ) : (
-                <div className="live-selection-note">
-                  <BadgeCheck size={17} />{" "}
-                  {selectedDrills.length
-                    ? "Your selected drills are ready to record."
-                    : "Select a drill to start recording."}
-                </div>
-              )}
-            </section>
-          </div>
-
-          <section className="results-section" id="results" ref={resultsRef}>
-            <div className="results-title">
-              <div>
-                <div className="eyebrow">
-                  <span></span> YOUR FEEDBACK
-                </div>
-                <h2>Analysis report</h2>
-                <p>See where you're doing well and where to improve.</p>
-              </div>
-              {feedback.startsWith("JAI HIND") && (
-                <button
-                  className="voice-button"
-                  type="button"
-                  onClick={playVoiceReport}
-                  disabled={voiceLoading}
-                >
-                  <AudioLines size={16} />{" "}
-                  {voiceLoading ? "Playing report..." : "Listen to report"}
-                </button>
+                <span className="ops-search-empty">No drills found</span>
               )}
             </div>
-            {voiceError && (
-              <p className="input-error" role="alert">
-                {voiceError}
-              </p>
+          </div>
+          <a className="ops-nav-link" href="#live-analysis">
+            <Camera size={16} /> Live Analysis
+          </a>
+          <a className="ops-nav-link" href="#performance-report">
+            <ClipboardList size={16} /> Performance History
+          </a>
+          <button
+            className="ops-nav-link ops-nav-button"
+            type="button"
+            onClick={() => setAudioPrompts((enabled) => !enabled)}
+          >
+            <Volume2 size={16} /> Audio Feedback Settings{" "}
+            <span
+              className={`ops-audio-status ${audioPrompts ? "enabled" : "disabled"}`}
+            >
+              {audioPrompts ? "ON" : "OFF"}
+            </span>
+          </button>
+          <a className="ops-nav-link" href="#about">
+            <Info size={16} /> About NCC Innovation
+            <br /> Camp
+          </a>
+        </nav>
+
+        <div className="ops-sidebar-bottom">
+          <div className="ops-competition">
+            <span className="ops-laurel">❧</span>
+            <span>
+              <strong>TOP 10</strong>
+              <small>
+                INTER-DIRECTORATE
+                <br />
+                COMPETITION
+              </small>
+              <b>2026</b>
+            </span>
+            <span className="ops-laurel right">❧</span>
+          </div>
+          <span className="ops-campus">UNITY · DISCIPLINE · SERVICE</span>
+        </div>
+      </aside>
+
+      <div className="ops-main">
+        <header className="ops-topbar">
+          <a
+            className="ops-app-switch"
+            href="#dashboard"
+            aria-label="Dashboard"
+          >
+            <Grid2X2 size={17} />
+          </a>
+          <label className="ops-search">
+            <Search size={16} />
+            <input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search drills"
+              aria-label="Search drills"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                aria-label="Clear search"
+                onClick={() => setSearchQuery("")}
+              >
+                <X size={14} />
+              </button>
             )}
+          </label>
+          <div className="ops-topbar-spacer" />
+          <span className="ops-command-chip">
+            <span className="ops-status-dot" />{" "}
+            {cameraReady ? "CAMERA CONNECTED" : "TRAINING WORKSPACE"}
+          </span>
+          <button
+            className="ops-notification"
+            type="button"
+            aria-label="Notifications"
+          >
+            <Bell size={17} />
+            <i />
+          </button>
+        </header>
+
+        <main className="ops-content">
+          <div className="ops-mobile-title">
+            <div>
+              <span>
+                NCC <b>DRILL ANALYZER</b>
+              </span>
+              <h1>Live analysis</h1>
+            </div>
+            <Shield size={21} />
+          </div>
+          <section className="ops-mobile-drill-picker" aria-label="Select drills">
+            <span>SELECT DRILLS</span>
+            <div>
+              {visibleDrills.map((drill) => (
+                <button
+                  key={drill.value}
+                  type="button"
+                  aria-pressed={selectedDrills.includes(drill.value)}
+                  disabled={loading || recording}
+                  onClick={() => toggleDrill(drill.value)}
+                >
+                  {selectedDrills.includes(drill.value) && <Check size={12} />}
+                  {drill.label}
+                </button>
+              ))}
+            </div>
+          </section>
+          <section className="ops-workspace-grid">
+            <article className="ops-card ops-camera-card" id="live-analysis">
+              <header className="ops-card-header">
+                <div className="ops-card-heading">
+                  <h2>
+                    {mode === "live" ? "Live Analysis" : "Video Analysis"}
+                  </h2>
+                  <span className="ops-card-subtitle">
+                    {mode === "live"
+                      ? "Capture your drill in real time"
+                      : "Upload a recording for review"}
+                  </span>
+                </div>
+                <div className="ops-card-actions">
+                  <div
+                    className="ops-mode-switch"
+                    role="group"
+                    aria-label="Choose analysis source"
+                  >
+                    <button
+                      className={mode === "live" ? "selected" : ""}
+                      onClick={() => switchMode("live")}
+                      type="button"
+                    >
+                      <Video size={14} /> Live
+                    </button>
+                    <button
+                      className={mode === "upload" ? "selected" : ""}
+                      onClick={() => switchMode("upload")}
+                      type="button"
+                    >
+                      Upload
+                    </button>
+                  </div>
+                  <button
+                    className="ops-icon-button"
+                    type="button"
+                    aria-label="Analysis options"
+                  >
+                    <MoreHorizontal size={19} />
+                  </button>
+                </div>
+              </header>
+
+              <div
+                className={`ops-video-stage ${cameraReady && mode === "live" ? "camera-on" : ""}`}
+              >
+                {mode === "live" ? (
+                  <>
+                    <video
+                      ref={videoRef}
+                      className="ops-video"
+                      autoPlay
+                      playsInline
+                      muted
+                      aria-label="Live camera preview"
+                    />
+                    {!cameraReady && (
+                      <div className="ops-camera-placeholder">
+                        <span className="ops-camera-icon">
+                          <Camera size={28} />
+                        </span>
+                        <strong>
+                          {cameraError
+                            ? "Camera unavailable"
+                            : "Your camera view will appear here"}
+                        </strong>
+                        <span>
+                          {cameraError ||
+                            "Allow camera access when you're ready to begin."}
+                        </span>
+                        {cameraError ? (
+                          <button
+                            className="ops-enable-camera"
+                            type="button"
+                            disabled={loading}
+                            onClick={startCamera}
+                          >
+                            Try again <ChevronRight size={14} />
+                          </button>
+                        ) : (
+                          <button
+                            className="ops-enable-camera"
+                            type="button"
+                            disabled={loading}
+                            onClick={startCamera}
+                          >
+                            Enable camera <ChevronRight size={14} />
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {cameraReady && (
+                      <div
+                        className={`ops-live-badge ${recording ? "is-recording" : ""}`}
+                      >
+                        <span />
+                        {recording ? "REC" : "LIVE"}
+                      </div>
+                    )}
+                    <div className="ops-video-caption">
+                      <span className="ops-caption-light" />
+                      {recording
+                        ? "RECORDING DRILL"
+                        : cameraReady
+                          ? "CAMERA PREVIEW"
+                          : "LIVE ANALYSIS"}
+                      <span className="ops-caption-message">
+                        {recording
+                          ? "Perform your selected drill"
+                          : cameraReady
+                            ? "Ready when you are"
+                            : "Camera is off"}
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <div
+                    className={`ops-upload-stage ${file ? "has-file" : ""} ${dragging ? "dragging" : ""}`}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      setDragging(true);
+                    }}
+                    onDragLeave={(event) => {
+                      if (!event.currentTarget.contains(event.relatedTarget)) {
+                        setDragging(false);
+                      }
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      setDragging(false);
+                      selectFile(event.dataTransfer.files[0]);
+                    }}
+                  >
+                    {filePreviewUrl ? (
+                      <video
+                        className="ops-upload-preview"
+                        src={filePreviewUrl}
+                        controls
+                        playsInline
+                      />
+                    ) : (
+                      <div className="ops-upload-prompt">
+                        <span className="ops-camera-icon">
+                          <Video size={27} />
+                        </span>
+                        <strong>
+                          {file ? file.name : "Choose a training video"}
+                        </strong>
+                        <span>
+                          MP4 or WebM · Use a clear, full-body recording
+                        </span>
+                        <button
+                          className="ops-enable-camera"
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={loading}
+                        >
+                          {file ? "Choose another video" : "Browse files"}{" "}
+                          <ChevronRight size={14} />
+                        </button>
+                      </div>
+                    )}
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="video/mp4,video/webm,.mp4,.webm"
+                      onChange={(event) => selectFile(event.target.files[0])}
+                      disabled={loading}
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="ops-camera-controls">
+                {mode === "live" ? (
+                  <>
+                    <div className="ops-capture-info">
+                      <span
+                        className={`ops-capture-indicator ${cameraReady ? "online" : ""}`}
+                      />
+                      <div>
+                        <strong>
+                          {recording
+                            ? "Recording in progress"
+                            : cameraReady
+                              ? "Camera ready"
+                              : "Camera not connected"}
+                        </strong>
+                        <small>
+                          {selectedDrills.length
+                            ? `${selectedDrills.length} drill${selectedDrills.length === 1 ? "" : "s"} selected`
+                            : "Select a drill from the sidebar"}
+                        </small>
+                      </div>
+                    </div>
+                    {!cameraReady ? (
+                      <button
+                        type="button"
+                        className="ops-primary-button"
+                        disabled={loading}
+                        onClick={startCamera}
+                      >
+                        <Camera size={15} /> Start camera
+                      </button>
+                    ) : recording ? (
+                      <button
+                        type="button"
+                        className="ops-primary-button stop"
+                        onClick={() => recorderRef.current?.stop()}
+                      >
+                        <Square size={14} fill="currentColor" /> Stop & analyze
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="ops-primary-button"
+                        disabled={!selectedDrills.length || loading}
+                        onClick={startRecording}
+                      >
+                        <span className="ops-button-record-dot" /> Start
+                        recording
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div className="ops-capture-info">
+                      <span
+                        className={`ops-capture-indicator ${file ? "online" : ""}`}
+                      />
+                      <div>
+                        <strong>
+                          {file ? file.name : "No video selected"}
+                        </strong>
+                        <small>
+                          {file
+                            ? "Video ready for analysis"
+                            : "Select a video file to continue"}
+                        </small>
+                      </div>
+                    </div>
+                    <div className="ops-upload-actions">
+                      <button
+                        type="button"
+                        className="ops-secondary-button"
+                        disabled={loading}
+                        onClick={() => fileInputRef.current?.click()}
+                      >
+                        Browse files
+                      </button>
+                      <button
+                        type="button"
+                        className="ops-primary-button"
+                        disabled={!file || !selectedDrills.length || loading}
+                        onClick={() => analyze(file)}
+                      >
+                        {loading ? (
+                          <LoaderCircle size={15} className="spin" />
+                        ) : (
+                          <Activity size={15} />
+                        )}{" "}
+                        Analyze video
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+              {inputError && (
+                <p className="ops-inline-error" role="alert">
+                  {inputError}
+                </p>
+              )}
+              {loading && (
+                <div className="ops-analysis-progress">
+                  <LoaderCircle size={15} className="spin" /> Reviewing your
+                  drill…
+                </div>
+              )}
+            </article>
+
+            <aside className="ops-right-column">
+              <section
+                className="ops-card ops-metrics-card"
+                aria-label="Real-time session metrics"
+              >
+                <header className="ops-card-header">
+                  <div className="ops-card-heading">
+                    <h2>Real-time Metrics</h2>
+                    <span className="ops-card-subtitle">Session status</span>
+                  </div>
+                  <Activity size={17} className="ops-muted-icon" />
+                </header>
+                <div className="ops-metric-grid">
+                  <div className="ops-metric">
+                    <div className={`ops-gauge ${cameraReady ? "active" : ""}`}>
+                      <span>{cameraReady ? "ON" : "OFF"}</span>
+                    </div>
+                    <strong>Camera</strong>
+                    <small>{cameraReady ? "Connected" : "Standby"}</small>
+                  </div>
+                  <div className="ops-metric">
+                    <div
+                      className={`ops-gauge ${selectedDrills.length ? "active" : ""}`}
+                    >
+                      <span>
+                        {selectedDrills.length}
+                        <i>/4</i>
+                      </span>
+                    </div>
+                    <strong>Drills</strong>
+                    <small>
+                      {selectedDrills.length ? "Selected" : "Choose a drill"}
+                    </small>
+                  </div>
+                  <div className="ops-metric">
+                    <div
+                      className={`ops-gauge ${recording ? "recording" : ""}`}
+                    >
+                      <span>{recording ? "REC" : "READY"}</span>
+                    </div>
+                    <strong>Session</strong>
+                    <small>{recording ? "Recording" : "Awaiting start"}</small>
+                  </div>
+                </div>
+                <div className="ops-metrics-foot">
+                  <span className="ops-status-dot" /> Live session indicators
+                </div>
+              </section>
+
+              <section className="ops-card ops-coach-card">
+                <header className="ops-card-header">
+                  <div className="ops-card-heading">
+                    <h2>AI Voice Coach</h2>
+                    <span className="ops-card-subtitle">Amazon Polly</span>
+                  </div>
+                  <AudioLines size={18} className="ops-muted-icon" />
+                </header>
+                <div className="ops-waveform" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                </div>
+                <div className="ops-coach-quote">
+                  {feedback
+                    ? feedback.slice(0, 154) +
+                      (feedback.length > 154 ? "…" : "")
+                    : "Your spoken drill feedback will appear here after analysis."}
+                </div>
+                <button
+                  type="button"
+                  className="ops-coach-play"
+                  onClick={() => playVoiceReport()}
+                  disabled={
+                    !feedback ||
+                    !audioPrompts ||
+                    voiceLoading ||
+                    !feedback.startsWith("JAI HIND")
+                  }
+                >
+                  {voiceLoading ? (
+                    <LoaderCircle size={14} className="spin" />
+                  ) : (
+                    <Mic2 size={14} />
+                  )}
+                  {voiceLoading
+                    ? "Preparing voice feedback"
+                    : "Play voice feedback"}
+                  <ChevronRight size={14} />
+                </button>
+                {voiceError && (
+                  <p className="ops-inline-error" role="alert">
+                    {voiceError}
+                  </p>
+                )}
+                <div className="ops-audio-toggle-row">
+                  <span>
+                    {audioPrompts ? (
+                      <Volume2 size={14} />
+                    ) : (
+                      <VolumeX size={14} />
+                    )}{" "}
+                    Audio prompts
+                  </span>
+                  <button
+                    className={`ops-toggle ${audioPrompts ? "on" : ""}`}
+                    role="switch"
+                    aria-checked={audioPrompts}
+                    aria-label="Toggle audio prompts"
+                    onClick={() => setAudioPrompts((enabled) => !enabled)}
+                    type="button"
+                  >
+                    <span />
+                  </button>
+                  <small>{audioPrompts ? "ON" : "OFF"}</small>
+                </div>
+              </section>
+
+              <section className="ops-card ops-selected-card">
+                <header className="ops-card-header">
+                  <div className="ops-card-heading">
+                    <h2>Selected Drills</h2>
+                    <span className="ops-card-subtitle">
+                      Included in this analysis
+                    </span>
+                  </div>
+                  <Settings2 size={16} className="ops-muted-icon" />
+                </header>
+                {selectedDrills.length ? (
+                  <div className="ops-selected-list">
+                    {DRILLS.filter((drill) =>
+                      selectedDrills.includes(drill.value),
+                    ).map((drill) => (
+                      <div key={drill.value}>
+                        <span>{drill.short}</span>
+                        {drill.label}
+                        <Check size={13} />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="ops-no-drills">
+                    Choose a drill from the left navigation.
+                  </p>
+                )}
+              </section>
+            </aside>
+          </section>
+
+          <section
+            className="ops-report-card"
+            id="performance-report"
+            aria-live="polite"
+          >
+            <header className="ops-card-header">
+              <div className="ops-card-heading">
+                <h2>Performance Report</h2>
+                <span className="ops-card-subtitle">Your latest analysis</span>
+              </div>
+              <ClipboardList size={17} className="ops-muted-icon" />
+            </header>
             {feedback ? (
-              <div className="report-content">
+              <div className="ops-report-content">
                 {imageSource && (
                   <img src={imageSource} alt="Annotated drill analysis" />
                 )}
                 <pre>{feedback}</pre>
               </div>
             ) : (
-              <div className="empty-results">
-                <div className="empty-icon">
-                  <ClipboardList size={22} />
-                </div>
-                <div>
-                  <strong>Your insights will appear here</strong>
-                  <p>
-                    Upload a video or record a drill to receive your
-                    personalized feedback.
-                  </p>
-                </div>
-                <ArrowDown size={18} />
+              <div className="ops-empty-report">
+                <ClipboardList size={16} />
+                <span>Your analysis will appear here after a drill.</span>
               </div>
             )}
           </section>
 
-          <section className="guide-section" id="guide">
-            <div className="guide-heading">
-              <div>
-                <div className="eyebrow">
-                  <span></span> SIMPLE BY DESIGN
-                </div>
-                <h2>Ready, set, improve.</h2>
-                <p>Three steps towards a sharper drill.</p>
-              </div>
-              <span>
-                YOUR TRAINING JOURNEY <ArrowRight size={15} />
-              </span>
-            </div>
-            <div className="guide-grid">
-              <div>
-                <span className="guide-icon">
-                  <FileVideo size={20} />
-                </span>
-                <small>STEP 01</small>
-                <h3>Capture your drill</h3>
-                <p>Upload a video or record yourself in action.</p>
-              </div>
-              <div>
-                <span className="guide-icon">
-                  <Crosshair size={20} />
-                </span>
-                <small>STEP 02</small>
-                <h3>Select your commands</h3>
-                <p>Choose the drills you want to focus on.</p>
-              </div>
-              <div>
-                <span className="guide-icon">
-                  <Sparkles size={20} />
-                </span>
-                <small>STEP 03</small>
-                <h3>Learn & improve</h3>
-                <p>Review your feedback and keep getting better.</p>
-              </div>
-            </div>
-          </section>
-          <footer className="footer">
+          <footer className="ops-footer" id="about">
             <span>
-              © NCC DRILL AI <i>•</i> MADE FOR THE CADETS OF TOMORROW
+              NCC DRILL ANALYZER <i>·</i> NCC INNOVATION CAMP
             </span>
-            <span>
-              UNITY & DISCIPLINE{" "}
-              <span className="footer-tricolor">
-                <b></b>
-                <b></b>
-                <b></b>
-              </span>
-            </span>
+            <span>UNITY · DISCIPLINE · SERVICE</span>
           </footer>
         </main>
       </div>
