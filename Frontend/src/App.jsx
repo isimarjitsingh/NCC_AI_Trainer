@@ -48,6 +48,7 @@ function App() {
   const [inputError, setInputError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [audioPrompts, setAudioPrompts] = useState(true);
+  const [performanceHistory, setPerformanceHistory] = useState([]);
   const [filePreviewUrl, setFilePreviewUrl] = useState("");
   const [dragging, setDragging] = useState(false);
   const videoRef = useRef(null);
@@ -196,6 +197,19 @@ function App() {
       }
       setFeedback(data.feedback);
       setImageSource(data.annotated_image_b64 || null);
+
+      // Save to performance history
+      setPerformanceHistory((prev) => [
+        {
+          id: Date.now(),
+          date: new Date().toLocaleDateString(),
+          drill: selectedDrills.join(", "),
+          mode,
+          feedback: data.feedback,
+          image: data.annotated_image_b64 || null,
+        },
+        ...prev,
+      ].slice(0, 10));
     } catch (error) {
       setFeedback(
         `Analysis failed: ${error.message}. Check that the analysis service is running, then try again.`,
@@ -899,7 +913,132 @@ function App() {
             )}
           </section>
 
-          <footer className="ops-footer" id="about">
+          {/* --- PERFORMANCE HISTORY SECTION --- */}
+          <section
+            className="ops-report-card"
+            id="performance-history"
+            aria-label="Performance History"
+          >
+            <header className="ops-card-header">
+              <div className="ops-card-heading">
+                <h2>Performance History</h2>
+                <span className="ops-card-subtitle">
+                  Your past drill analyses
+                </span>
+              </div>
+              <ClipboardList size={17} className="ops-muted-icon" />
+            </header>
+            {performanceHistory.length === 0 ? (
+              <div className="ops-empty-report">
+                <ClipboardList size={16} />
+                <span>
+                  No analysis history yet. Complete a drill analysis to see
+                  records here.
+                </span>
+              </div>
+            ) : (
+              <div className="ops-history-list">
+                {performanceHistory.map((record) => (
+                  <div key={record.id} className="ops-history-item">
+                    <div className="ops-history-header">
+                      <span className="ops-history-date">{record.date}</span>
+                      <span className="ops-history-mode">{record.mode}</span>
+                    </div>
+                    <div className="ops-history-drills">
+                      {record.drill.split(",").map((d, i) => (
+                        <span key={i} className="ops-history-drill">
+                          {d.trim()}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="ops-history-feedback">
+                      <pre>{record.feedback}</pre>
+                    </div>
+                    {record.image && (
+                      <img
+                        src={record.image}
+                        alt="Past analysis"
+                        className="ops-history-image"
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          {/* --- ABOUT NCC CAMP SECTION --- */}
+          <section className="ops-report-card" id="about" aria-label="About NCC Camp">
+            <header className="ops-card-header">
+              <div className="ops-card-heading">
+                <h2>About NCC Innovation Camp</h2>
+                <span className="ops-card-subtitle">
+                  NCC Innovation, Incubation and Cultural Camp
+                </span>
+              </div>
+              <Info size={17} className="ops-muted-icon" />
+            </header>
+            <div className="ops-about-content">
+              <div className="ops-about-grid">
+                <div className="ops-about-card">
+                  <h3>Camp Overview</h3>
+                  <p>
+                    <strong>Event:</strong> NCC Innovation, Incubation and Cultural Camp (Idea &amp; Innovation Competition)
+                  </p>
+                  <p>
+                    <strong>Host &amp; Location:</strong> Vijayawada, Andhra Pradesh (organized under the aegis of DG NCC by the AP&amp;T Directorate)
+                  </p>
+                  <p>
+                    <strong>Timeline:</strong> October 2026 (following your Directorate-level selection round)
+                  </p>
+                </div>
+                <div className="ops-about-card">
+                  <h3>Competition Scale</h3>
+                  <p>
+                    <strong>Participating Directorates:</strong> 19
+                  </p>
+                  <p>
+                    <strong>Teams per Directorate:</strong> 5
+                  </p>
+                  <p>
+                    <strong>Total Competing Teams:</strong> 95 teams nationally
+                  </p>
+                  <p>
+                    <strong>Your Result:</strong> Top 10 nationally (top ~10.5% nationwide)
+                  </p>
+                </div>
+              </div>
+              <div className="ops-about-card full-width">
+                <h3>Your Entry &amp; Role</h3>
+                <p>
+                  <strong>Rank:</strong> Under Officer (UO)
+                </p>
+                <p>
+                  <strong>Directorate:</strong> Punjab, Haryana, Himachal Pradesh &amp; Chandigarh Directorate
+                </p>
+                <p>
+                  <strong>Institution:</strong> CT University
+                </p>
+                <p>
+                  <strong>Project:</strong> NCC Drill Analyzer — an AI-powered computer vision posture and drill evaluation system built using MediaPipe Pose, OpenCV, Flask, React, and Amazon Polly for real-time voice-guided feedback.
+                </p>
+                <p>
+                  <strong>Key Evaluations:</strong> Demonstrated live webcam and video-upload diagnostics for core cadet movements (salutes, high leg marching, attention, and turns).
+                </p>
+              </div>
+              <div className="ops-about-card full-width">
+                <h3>Camp Focus &amp; Format</h3>
+                <p>
+                  <strong>Objective:</strong> Aligned with the Viksit Bharat @ 2047 vision to foster defence tech, practical problem-solving, and startup/innovation awareness among cadets.
+                </p>
+                <p>
+                  <strong>Evaluation Rounds:</strong> Concept note submissions, prototype demonstrations, visual presentations, and live pitching to a judging panel evaluating societal/defence utility, technical execution, and scalability.
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <footer className="ops-footer">
             <span>
               NCC DRILL ANALYZER <i>·</i> NCC INNOVATION CAMP
             </span>

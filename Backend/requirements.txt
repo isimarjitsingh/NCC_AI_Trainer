@@ -1,9 +1,10 @@
 flask
 flask-cors
-opencv-python
+opencv-python-headless
 mediapipe
 numpy
 pandas
 boto3
 python-dotenv
+gunicorn
 

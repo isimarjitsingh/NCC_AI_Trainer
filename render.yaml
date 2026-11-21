@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: ncc-ai-trainer-backend
+    env: python
+    region: singapore
+    buildCommand: "pip install -r Backend/requirements.txt"
+    startCommand: "cd Backend && gunicorn app:app"
+    envVars:
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_REGION
+        value: ap-south-1
+      - key: FLASK_ENV
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.11.9
