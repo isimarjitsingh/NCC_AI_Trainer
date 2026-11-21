@@ -1,916 +1,923 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Activity,
+  AudioLines,
+  Bell,
+  Camera,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  ClipboardList,
+  Grid2X2,
+  Info,
+  LayoutDashboard,
+  LoaderCircle,
+  Mic2,
+  MoreHorizontal,
+  Search,
+  Settings2,
+  Shield,
+  Square,
+  Video,
+  Volume2,
+  VolumeX,
+  X,
+} from "lucide-react";
 
-// 🚨 All file imports that caused errors have been removed.
-
-// --- DRILL DEFINITIONS ---
-const DRILL_CHECKPOINTS = [
-  { value: 'high_leg_march', label: 'High Leg March (Attention)' },
-  { value: 'salute', label: 'NCC Salute' },
-  { value: 'turn_right', label: 'Right Turn (Dahine Mur)' },
-  { value: 'turn_left', label: 'Left Turn (Baen Mur)' },
+const DRILLS = [
+  { value: "salute", label: "Salute", short: "SAL" },
+  { value: "high_leg_march", label: "High Leg Marching", short: "MAR" },
+  { value: "turn_right", label: "Right Turn", short: "RT" },
+  { value: "turn_left", label: "Left Turn", short: "LT" },
 ];
 
+const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:5000";
+
 function App() {
-  // --- STATE MANAGEMENT ---
   const [file, setFile] = useState(null);
-  const [selectedCheckpoints, setSelectedCheckpoints] = useState([]);
-  const [feedback, setFeedback] = useState('Welcome! Please select an analysis mode.');
+  const [selectedDrills, setSelectedDrills] = useState([]);
+  const [mode, setMode] = useState("live");
+  const [cameraReady, setCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState("");
+  const [recording, setRecording] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState(0);
+  const [feedback, setFeedback] = useState("");
   const [imageSource, setImageSource] = useState(null);
   const [voiceLoading, setVoiceLoading] = useState(false);
-  
-  // --- LIVE MODE STATE ---
-  const [isLiveMode, setIsLiveMode] = useState(false); // Is the live *interface* active?
-  const [isRecording, setIsRecording] = useState(false); // Is it *currently* recording?
-  const [cameraError, setCameraError] = useState(null);
-  const [availableDevices, setAvailableDevices] = useState([]); // Stores enumerated devices
-  
-  // --- REFS ---
-  const videoRef = useRef(null); 
-  const streamRef = useRef(null); // Ref for MediaStream
-  const mediaRecorderRef = useRef(null); // 🚨 NEW: Ref for MediaRecorder instance
-  const recordedChunksRef = useRef([]); // 🚨 NEW: Ref to store recorded video data
-  const resultsRef = useRef(null); 
+  const [voiceError, setVoiceError] = useState("");
+  const [inputError, setInputError] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [audioPrompts, setAudioPrompts] = useState(true);
+  const [filePreviewUrl, setFilePreviewUrl] = useState("");
+  const [dragging, setDragging] = useState(false);
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const recorderRef = useRef(null);
+  const chunksRef = useRef([]);
+  const fileInputRef = useRef(null);
+  const cameraRequestRef = useRef(0);
 
-  // --- 🚀 AMAZON POLLY TTS FUNCTION (Calling Flask Backend) 🚀 ---
-  const playVoiceReport = async (text) => {
-    if (voiceLoading) return;
+  const visibleDrills = useMemo(
+    () =>
+      DRILLS.filter((drill) =>
+        drill.label.toLowerCase().includes(searchQuery.toLowerCase()),
+      ),
+    [searchQuery],
+  );
 
-    setVoiceLoading(true);
-    // Sanitize text for SSML and voice
-    const report_text = text.replace(/[^a-zA-Z0-9.,;!?()\s]/g, '');
+  useEffect(() => {
+    if (cameraReady && videoRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+    }
+  }, [cameraReady]);
 
-    try {
-      const response = await fetch('http://127.0.0.1:5000/generate_polly_voice', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ report_text }),
-      });
+  useEffect(() => {
+    if (!file) {
+      setFilePreviewUrl("");
+      return undefined;
+    }
+    const url = URL.createObjectURL(file);
+    setFilePreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || `Backend failed with status: ${response.status}`);
+  useEffect(
+    () => () => {
+      cameraRequestRef.current += 1;
+      if (recorderRef.current?.state === "recording") {
+        recorderRef.current.onstop = null;
+        recorderRef.current.stop();
       }
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+    },
+    [],
+  );
 
-      const audioBlob = await response.blob();
-      const audioUrl = URL.createObjectURL(audioBlob);
-      const audio = new Audio(audioUrl);
-      audio.play();
-
-      audio.onended = () => {
-        URL.revokeObjectURL(audioUrl);
-        setVoiceLoading(false);
-      };
-      audio.onerror = () => {
-        URL.revokeObjectURL(audioUrl);
-        setVoiceLoading(false);
-        alert("Error playing audio stream.");
-      };
-
-    } catch (error) {
-      console.error("Error generating Amazon Polly voice:", error);
-      alert(`Voice generation failed. Please check your terminal for AWS credential errors. Details: ${error.message}`);
-      setVoiceLoading(false);
+  const stopCamera = () => {
+    cameraRequestRef.current += 1;
+    if (recorderRef.current?.state === "recording") {
+      recorderRef.current.onstop = null;
+      recorderRef.current.stop();
     }
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    setCameraReady(false);
+    setRecording(false);
   };
 
-  // --- UTILITY: SMALL DELAY FUNCTION ---
-  const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-  
-  // --- LIVE STREAM CONTROL FUNCTIONS (LOCAL/VIRTUAL WEBCAM) ---
-
-  // 1. Get list of potential camera devices
-  const getTargetDevices = () => {
-    setCameraError(null);
-    const videoDevices = availableDevices.filter(device => device.kind === 'videoinput');
-    
-    if (videoDevices.length === 0) {
-        setCameraError("No video input devices found. Ensure webcam access is allowed.");
-        return [];
-    }
-    
-    const candidates = [];
-    const internalDevices = [];
-
-    // Prioritize external/virtual devices
-    videoDevices.forEach(device => {
-        const label = device.label.toLowerCase();
-        if (label.includes('droidcam') || label.includes('iriun') || label.includes('epoccam') || !label.includes('integrated')) {
-            candidates.push(device.deviceId);
-        } else {
-            internalDevices.push(device.deviceId);
-        }
-    });
-
-    const uniqueCandidates = [...new Set(candidates)];
-    // Fallback to internal devices if no external ones are found
-    const finalDeviceList = uniqueCandidates.length > 0 ? uniqueCandidates : internalDevices;
-    
-    // Return all viable candidates to try
-    return finalDeviceList;
-  };
-  
-  // 2. Request permissions on load
-  const requestMediaPermissions = async () => {
+  const startCamera = async () => {
+    const request = ++cameraRequestRef.current;
+    setCameraError("");
     try {
-        // Request a stream first (simple access check)
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-        stream.getTracks().forEach(track => track.stop()); // Immediately stop it
-
-        // Then, enumerate and store the device list
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        setAvailableDevices(devices);
-        setFeedback("Camera setup complete. Ready to start live drill.");
-    } catch (err) {
-        setCameraError(`Permission Denied: ${err.name}. Please ensure your phone camera app is running and permissions are granted.`);
-        setAvailableDevices([]);
-        setFeedback(`Live stream blocked. See error below.`);
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: false,
+      });
+      if (request !== cameraRequestRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      streamRef.current = stream;
+      setCameraReady(true);
+    } catch {
+      if (request === cameraRequestRef.current) {
+        setCameraError(
+          "Camera access is unavailable. Check your browser permissions and try again.",
+        );
+      }
     }
   };
-  
-  // 3. Start the live stream
-  const startLiveStream = async () => {
-    setFile(null); 
-    setFeedback("Attempting to connect to camera...");
-    setCameraError(null);
-    setIsLiveMode(true); // Set live mode active
 
-    // 1. Get the list of potential device IDs
-    const deviceIds = getTargetDevices();
-
-    if (deviceIds.length === 0) {
-      setFeedback(`Live stream failed. Error: ${cameraError || "No suitable camera ID found. Ensure app is connected."}`);
-      setIsLiveMode(false);
+  const selectFile = (selectedFile) => {
+    if (!selectedFile) return;
+    if (
+      !/\.(mp4|webm)$/i.test(selectedFile.name) &&
+      !["video/mp4", "video/webm"].includes(selectedFile.type)
+    ) {
+      setFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      setInputError("Choose an MP4 or WebM video to continue.");
       return;
     }
+    setFile(selectedFile);
+    setInputError("");
+    setFeedback("");
+    setImageSource(null);
+  };
 
-    let stream = null;
-    let successfulDeviceId = null;
-    let lastError = null;
-    
-    // 2. Loop through candidate device IDs until a stream works
-    for (const deviceId of deviceIds) {
-        setFeedback(`Attempting connection to device ${deviceId.slice(0, 4)}...`);
-        try {
-            const constraints = { 
-                video: { 
-                    deviceId: { exact: deviceId }
-                }, 
-                audio: false 
-            };
-            
-            stream = await navigator.mediaDevices.getUserMedia(constraints); 
-            successfulDeviceId = deviceId;
-            break; // Success! Break out of loop.
-        } catch (err) {
-            lastError = err.name;
-            console.warn(`Attempt failed for device ID ${deviceId}: ${err.name}`);
-        }
-    }
-
-    if (!stream) {
-        setFeedback(`Cannot start stream. Tried ${deviceIds.length} devices. Last Error: ${lastError || "Unknown connection failure."}`);
-        setIsLiveMode(false);
-        return;
-    }
-
-    // 3. Handle successful stream connection and video playback
-    streamRef.current = stream;
-
+  const playVoiceReport = async (reportText = feedback) => {
+    if (!audioPrompts || voiceLoading || !reportText) return;
+    setVoiceLoading(true);
+    setVoiceError("");
+    let audioUrl;
     try {
-      if (videoRef.current) {
-        const video = videoRef.current;
-        video.srcObject = stream;
-        
-        // 4. Wait for the video element to confirm stream load AND playability
-        await new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => {
-                reject(new Error("Video stream load timeout/failure."));
-            }, 8000); // 8-second timeout
-
-            video.oncanplay = () => {
-                clearTimeout(timeout);
-                setTimeout(() => {
-                    if(video.srcObject) { 
-                        resolve(); 
-                    } else {
-                        reject(new Error("Stream is playable, but srcObject is empty."));
-                    }
-                }, 100); 
-            };
-            video.onerror = (e) => {
-                clearTimeout(timeout);
-                reject(new Error(`Video Element Error: ${e.message || e.currentTarget.error.message}`));
-            };
-        });
-        
-        // 5. Attempt to play
-        try {
-            await videoRef.current.play();
-            console.log("Video playback started successfully.");
-        } catch (playError) {
-            console.error("Video play() failed:", playError);
-            throw new Error(`Video play failed: ${playError.name}. Browser might block autoplay.`);
-        }
-      }
-      
-      setCameraError(null);
-      setFeedback("Camera feed active. Click 'Start Recording' when ready.");
-
-    } catch (err) {
-      console.error("Error setting up video playback:", err);
-      stream.getTracks().forEach(track => track.stop()); // Clean up failed stream
-      setCameraError(err.message || err.name);
-      setFeedback(`Video Playback Error: ${err.message}. Please restart the Live Drill.`);
-      setIsLiveMode(false);
+      const response = await fetch(`${API_URL}/generate_polly_voice`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          report_text: reportText.replace(/[^a-zA-Z0-9.,;!?()\s]/g, ""),
+        }),
+      });
+      if (!response.ok) throw new Error("Voice report is unavailable.");
+      audioUrl = URL.createObjectURL(await response.blob());
+      const audio = new Audio(audioUrl);
+      const cleanup = () => {
+        URL.revokeObjectURL(audioUrl);
+        setVoiceLoading(false);
+      };
+      audio.onended = cleanup;
+      audio.onerror = cleanup;
+      await audio.play();
+    } catch {
+      if (audioUrl) URL.revokeObjectURL(audioUrl);
+      setVoiceLoading(false);
+      setVoiceError("Voice feedback could not be played. Please try again.");
     }
   };
 
-  // 4. Stop the live stream
-  const stopLiveStream = () => {
-    // Stop recording if it's in progress
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-        mediaRecorderRef.current.stop();
-    }
-    
-    // Stop camera stream
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-        videoRef.current.srcObject = null; // Detach stream from video element
-        videoRef.current.load();
-    }
-    setIsLiveMode(false);
-    setIsRecording(false);
-    setFeedback("Live stream stopped. Select a mode to continue.");
-    setImageSource(null); 
-    setCameraError(null);
-  };
-  
-  // 5. Request permissions on initial load
-  useEffect(() => {
-    requestMediaPermissions(); 
-    return () => stopLiveStream(); // Cleanup on unmount
-  }, []);
-  
-  // --- 🚨 NEW: MEDIA RECORDER FUNCTIONS ---
-  
-  const handleStartRecording = () => {
-    if (!streamRef.current) {
-        alert("Camera stream is not active. Click 'Start Live Drill' first.");
-        return;
-    }
-    if (selectedCheckpoints.length === 0) {
-        alert("Please select at least one drill to analyze before recording.");
-        return;
-    }
-
-    recordedChunksRef.current = []; // Clear previous recording chunks
-    
-    try {
-        mediaRecorderRef.current = new MediaRecorder(streamRef.current, {
-            mimeType: 'video/webm' // Use webm, good balance of quality/compatibility
-        });
-
-        // Store data chunks as they become available
-        mediaRecorderRef.current.ondataavailable = (event) => {
-            if (event.data.size > 0) {
-                recordedChunksRef.current.push(event.data);
-            }
-        };
-
-        // Handle the stop event (this is where we process the video)
-        mediaRecorderRef.current.onstop = () => {
-            // Create a single Blob from all the chunks
-            const videoBlob = new Blob(recordedChunksRef.current, {
-                type: 'video/webm'
-            });
-            // Create a File object to send to the backend
-            const recordedFile = new File([videoBlob], "live-drill.webm", {
-                type: 'video/webm',
-                lastModified: Date.now()
-            });
-            
-            // Send this file for analysis
-            handleAnalyze(recordedFile); // Pass the new file to handleAnalyze
-        };
-
-        // Start recording
-        mediaRecorderRef.current.start();
-        setIsRecording(true);
-        setFeedback("🔴 Recording... Perform your drill now. Click 'Stop & Analyze' when finished.");
-
-    } catch (e) {
-        console.error("Failed to create MediaRecorder:", e);
-        alert("Error starting recorder. Your browser may not support MediaRecorder with this camera.");
-    }
-  };
-
-  const handleStopRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-        mediaRecorderRef.current.stop(); // This triggers the 'onstop' event
-        setIsRecording(false);
-        setLoading(true); // Show loading spinner
-        setFeedback("Recording stopped. Analyzing video...");
-    }
-  };
-  
-  // 🚨 MODIFIED: handleAnalyze now accepts an optional file (from MediaRecorder)
-  const handleAnalyze = async (recordedFile = null) => {
-    const videoFile = recordedFile || file; // Use recorded file if provided, else use uploaded file
-    
-    if (!videoFile) return alert('Please upload a video or record one.');
-    if (selectedCheckpoints.length === 0) return alert('Select at least one drill.');
-
-    // If this was a recording, stop the camera feed
-    if (recordedFile && isLiveMode) {
-        stopLiveStream();
-    }
-
+  const analyze = async (videoFile) => {
+    if (!videoFile || selectedDrills.length === 0) return;
     setLoading(true);
-    simulateProgress();
-    setFeedback('Analyzing video...');
-
+    setVoiceError("");
+    setInputError("");
+    setFeedback("");
+    setImageSource(null);
     const formData = new FormData();
-    formData.append('video', videoFile);
-    formData.append('drill_types', JSON.stringify(selectedCheckpoints));
-
+    formData.append("video", videoFile);
+    formData.append("drill_types", JSON.stringify(selectedDrills));
     try {
-      // Use the existing video upload endpoint
-      const response = await fetch('http://127.0.0.1:5000/upload_and_analyze', {
-        method: 'POST',
+      const response = await fetch(`${API_URL}/upload_and_analyze`, {
+        method: "POST",
         body: formData,
       });
-
       const data = await response.json();
-
-      setProgress(100);
-      setTimeout(() => setLoading(false), 500);
-
-      if (response.ok && data.success) {
-        setFeedback(data.feedback);
-        setImageSource(data.annotated_image_b64 || null);
-        resultsRef.current.scrollIntoView({ behavior: 'smooth' });
-        playVoiceReport(data.feedback);
-      } else {
-        setFeedback(`Analysis Failed: ${data.error || 'Unknown error.'}`);
-        setImageSource(null);
-        resultsRef.current.scrollIntoView({ behavior: 'smooth' });
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || "Unable to analyze this video.");
       }
+      setFeedback(data.feedback);
+      setImageSource(data.annotated_image_b64 || null);
     } catch (error) {
-      setFeedback(`Network Error: ${error.message}`);
-      setImageSource(null);
+      setFeedback(
+        `Analysis failed: ${error.message}. Check that the analysis service is running, then try again.`,
+      );
+    } finally {
       setLoading(false);
-      resultsRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   };
 
-  // --- EXISTING VIDEO UPLOAD FUNCTIONS ---
-  const handleFileChange = (e) => {
-    const uploadedFile = e.target.files[0];
-    setFile(uploadedFile || null);
-    setFeedback(uploadedFile ? `Selected: ${uploadedFile.name}` : 'Select a mode and one or more drills.');
-    if(isLiveMode) stopLiveStream(); 
+  const startRecording = () => {
+    if (!streamRef.current || !selectedDrills.length) return;
+    try {
+      const recorder = new MediaRecorder(streamRef.current);
+      recorderRef.current = recorder;
+      chunksRef.current = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data.size) chunksRef.current.push(event.data);
+      };
+      recorder.onstop = () => {
+        const video = new File(chunksRef.current, "live-drill.webm", {
+          type: recorder.mimeType || "video/webm",
+        });
+        stopCamera();
+        analyze(video);
+      };
+      recorder.start();
+      setRecording(true);
+    } catch {
+      setCameraError("Recording is not supported by this browser or camera.");
+    }
   };
 
-  const handleCheckpointChange = (e) => {
-    const { value, checked } = e.target;
-    setSelectedCheckpoints(prev =>
-      checked ? [...prev, value] : prev.filter(v => v !== value)
+  const toggleDrill = (value) => {
+    setSelectedDrills((current) =>
+      current.includes(value)
+        ? current.filter((item) => item !== value)
+        : [...current, value],
     );
   };
 
-  const simulateProgress = () => {
-    setProgress(0);
-    const interval = setInterval(() => {
-      setProgress(prev => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          return 100;
-        }
-        return prev + Math.floor(Math.random() * 5 + 1);
-      });
-    }, 300);
+  const switchMode = (nextMode) => {
+    if (nextMode === mode) return;
+    stopCamera();
+    setMode(nextMode);
+    setCameraError("");
   };
 
-
-  // --- JSX RENDER ---
   return (
-    <div className="app-container">
-      {/* 🚨 NEW: Inline <style> tag for a professional white theme */}
-      <style>
-      {`
-      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&family=Montserrat:wght@700&display=swap');
-
-      :root {
-        --ncc-red: #dc2626;
-        --ncc-blue: #1e3a8a;
-        --ncc-sky: #0ea5e9;
-        --ncc-dark-green: #064e3b;
-        --ncc-gold: #c28827;
-        --ncc-teal: #22938b;
-        --bg-gray: #f7fafc;
-        --bg-card: #fffffffa;
-        --border-color: #d1d5db;
-        --shadow-lg: 0 8px 32px 0 rgba(2,12,27,0.07);
-        --shadow-card: 0 4px 32px 0 rgba(34,147,139,0.08);
-        --text-dark: #1a202c;
-        --text-muted: #6c757d;
-        --text-accent: #22938b;
-        --heading-font: 'Montserrat', 'Inter', sans-serif;
-      }
-
-
-      body {
-        font-family: 'Inter', sans-serif;
-        background: linear-gradient(135deg, var(--bg-gray) 60%, #e0e7ef 100%);
-        color: var(--text-dark);
-        margin: 0;
-      }
-
-      .app-container {
-        min-height: 100vh;
-      }
-
-      /* --- Header --- */
-      .app-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 1.8rem 2.5rem 1.2rem 2.5rem;
-        background: linear-gradient(90deg, #f8fafc 60%, #ecfdf5 100%);
-        box-shadow: var(--shadow-lg);
-        border-bottom: 3px solid var(--ncc-teal);
-        border-radius: 0 0 20px 20px;
-      }
-      .header-logo {
-        display: flex;
-        align-items: center;
-        gap: 0.6rem;
-      }
-      .logo-emoji { font-size: 2.3rem; }
-      .ncc-text {
-        font-size: 1.35rem;
-        font-family: var(--heading-font);
-        font-weight: 800;
-        letter-spacing: 2px;
-        display: flex;
-        gap: 0.32rem;
-      }
-      .ncc-red { color: var(--ncc-red); text-shadow: 1px 1px 0 #fff3; }
-      .ncc-sky { color: var(--ncc-sky);}
-      .ncc-blue { color: var(--ncc-blue);}
-      .header-title {
-        font-family: var(--heading-font);
-        font-size: 2.3rem;
-        font-weight: 900;
-        color: var(--ncc-dark-green);
-        letter-spacing: 1.5px;
-        text-shadow: 2px 6px 18px #0ea5e920;
-        text-transform: uppercase;
-      }
-      .header-line {
-        width: 100%;
-        height: 6px;
-        background: linear-gradient(90deg, var(--ncc-gold) 0%, var(--ncc-red) 35%, var(--ncc-sky) 65%, var(--ncc-blue) 100%);
-        margin-bottom: 2.5rem;
-        border-radius: 2px;
-        opacity: 0.82;
-      }
-
-      .main-content {
-        max-width: 1280px;
-        margin: 2.2rem auto;
-        padding: 0 1.5rem;
-      }
-
-      .section-title {
-        font-family: var(--heading-font);
-        font-size: 1.75rem;
-        font-weight: 800;
-        color: var(--ncc-gold);
-        margin-bottom: 2rem;
-        letter-spacing: 1.5px;
-        text-shadow: 2px 3px 5px rgba(194,136,39,0.08);
-        text-align: center;
-      }
-      .centered { text-align: center; }
-
-      /* --- Mode & Input --- */
-      .input-analysis-container {
-        max-width: 850px;
-        margin: 2rem auto 0 auto;
-        padding: 2.2rem 2rem 2.5rem 2rem;
-        background: var(--bg-card);
-        border-radius: 18px;
-        border: 2px solid #e0e7ef;
-        box-shadow: var(--shadow-card);
-        position: relative;
-        transition: box-shadow 0.18s;
-      }
-      .input-analysis-container:hover {
-        box-shadow: 0 12px 40px 0 rgba(2,26,50,0.12);
-      }
-
-      .mode-selection {
-        display: flex;
-        justify-content: center;
-        margin-bottom: 1.8rem;
-      }
-      .mode-button {
-        padding: 0.95rem 2.2rem;
-        margin: 0 1rem 0 0;
-        font-weight: 700;
-        font-family: var(--heading-font);
-        font-size: 1.07rem;
-        border-radius: 9999px;
-        border: 2.5px solid var(--ncc-teal);
-        background: linear-gradient(90deg, #fff, #d1fae5 100%);
-        color: var(--ncc-dark-green);
-        cursor: pointer;
-        box-shadow: 0 2px 6px rgba(34,147,139,0.11);
-        letter-spacing: 1px;
-        transition: all 0.2s;
-      }
-      .mode-button.active, .mode-button:hover {
-        background: linear-gradient(90deg, var(--ncc-teal) 15%, #fffbe5 85%);
-        color: var(--ncc-gold);
-        border-color: var(--ncc-gold);
-        transform: translateY(-2px) scale(1.03);
-        box-shadow: 0 4px 16px rgba(194,136,39,0.14);
-      }
-
-      .analyze-section button, .live-section button {
-        width: 100%;
-        padding: 1.1rem 0;
-        margin-top: 0.6rem;
-        font-weight: 800;
-        font-size: 1.03rem;
-        font-family: var(--heading-font);
-        border-radius: 11px;
-        background: linear-gradient(90deg, var(--ncc-blue), var(--ncc-teal));
-        color: #fff;
-        transition: all 0.19s;
-        cursor: pointer;
-        border: none;
-        letter-spacing: 1px;
-        box-shadow: 0 6px 18px rgba(30,58,138,0.13);
-      }
-      .analyze-section button:hover, .live-section button:hover {
-        background: linear-gradient(90deg, var(--ncc-gold), var(--ncc-blue));
-        color: var(--ncc-dark-green);
-        box-shadow: 0 10px 28px rgba(30,58,138,0.21);
-      }
-      .analyze-section button:disabled, .live-section button:disabled {
-        background: #bdc4cb;
-        color: #fff;
-        cursor: not-allowed;
-        box-shadow: none;
-      }
-      .live-section .record-button {
-        background: linear-gradient(90deg, var(--ncc-red), var(--ncc-blue));
-      }
-      .live-section .record-button:hover {
-        background: linear-gradient(90deg, var(--ncc-gold), var(--ncc-red));
-        color: #fff;
-      }
-
-      .analyze-section input[type="file"] {
-        display: block;
-        width: 100%;
-        padding: 0.85rem 0.7rem;
-        font-weight: 500;
-        border: 2px solid var(--border-color);
-        border-radius: 11px;
-        background-color: #f3f4f6;
-        color: var(--ncc-dark-green);
-        font-family: inherit;
-      } 
-
-      .hint {
-        color: var(--text-muted);
-        font-size: 1.03rem;
-        margin-top: 1rem;
-        text-align: center;
-        opacity: 0.85;
-        white-space: pre-wrap;
-      }
-      .checkbox-grid {
-        display: flex;
-        justify-content: center;
-        flex-wrap: wrap;
-        gap: 1.1rem;
-        margin: 2rem auto 2.7rem auto;
-        max-width: 900px;
-      }
-      .checkbox-label {
-        background: linear-gradient(97deg,#fafafa 65%, #e0e7ef 100%);
-        padding: 0.98rem 1.8rem;
-        border-radius: 13px;
-        cursor: pointer;
-        transition: all 0.17s;
-        border: 2px solid var(--border-color);
-        font-family: var(--heading-font);
-        color: var(--ncc-dark-green);
-        font-weight: 600;
-        box-shadow: 0 2px 6px rgba(2,26,50,0.06);
-        font-size: 1.06rem;
-      }
-      .checkbox-label:has(input:checked) {
-        background: linear-gradient(94deg, #fffbe5 20%, #e0e7ef 100%);
-        border-color: var(--ncc-gold);
-        color: var(--ncc-gold);
-        font-weight: 800;
-        box-shadow: 0 5px 18px 0 rgba(194,136,39,0.13);
-        transform: translateY(-2px) scale(1.03);
-      }
-      .checkbox-label input {
-        margin-right: 0.6rem;
-      }
-
-      /* --- Results --- */
-      .results-section {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
-        gap: 2.5rem;
-        margin: 2.6rem auto 0 auto;
-      }
-      .visual-feedback, .analysis-report {
-        background: rgba(255,255,255,0.99);
-        backdrop-filter: blur(2px);
-        padding: 2rem 1.3rem 1.9rem 1.3rem;
-        border-radius: 14px;
-        box-shadow: 0 8px 36px rgba(34,147,139,0.08), 0 2px 7px rgba(30,58,138,0.037);
-        border: 2px solid var(--ncc-teal);
-        position: relative;
-      }
-      .visual-feedback img, .visual-feedback video {
-        width: 100%;
-        max-width: 450px;
-        height: auto;
-        border-radius: 8px;
-        margin-top: 1.3rem;
-        box-shadow: 0 4px 26px rgba(2,26,50,0.13);
-        border: 1.5px solid var(--border-color);
-        background: #e5e7eb;
-      }
-      .analysis-report pre {
-        background-color: #15305c;
-        color: #e2e8f0;
-        padding: 1.25rem;
-        border-radius: 8px;
-        white-space: pre-wrap;
-        font-size: 1.04rem;
-        border-left: 6px solid var(--ncc-blue);
-        min-height: 90px;
-      }
-      .analysis-report button {
-        padding: 0.72rem 1.4rem;
-        font-weight: 800;
-        border-radius: 9px;
-        background: linear-gradient(90deg, var(--ncc-sky), var(--ncc-blue) 67%);
-        color: white;
-        font-family: var(--heading-font);
-        letter-spacing: 1.2px;
-        margin-top: 1.2rem;
-        box-shadow: 0 4px 16px rgba(2,26,50,0.071);
-        transition: all 0.18s;
-        outline: none;
-        border: none;
-      }
-      .analysis-report button:hover {
-        background: linear-gradient(90deg, var(--ncc-gold), var(--ncc-teal));
-        color: var(--ncc-dark-green);
-      }
-      .analysis-report button:disabled {
-        background-color: #d1d5db;
-      }
-
-      /* --- Footer --- */
-      .app-footer {
-        text-align: center;
-        padding: 2rem;
-        color: var(--text-muted);
-        font-size: 0.93rem;
-        background: linear-gradient(90deg, #fff, #f7fafc 80%);
-        border-top: 2px solid #e2e8f0;
-        border-radius: 0 0 12px 12px;
-        margin-top: 2.2rem;
-      }
-
-      /* --- Loading Overlay --- */
-      .loading-overlay {
-        position: fixed;
-        top: 0; left: 0;
-        width: 100%; height: 100%;
-        background: rgba(255,255,255,0.87);
-        backdrop-filter: blur(7px);
-        z-index: 200;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-      }
-      .loading-box {
-        background: var(--bg-card);
-        padding: 2.7rem 2.5rem;
-        border-radius: 12px;
-        box-shadow: 0 16px 44px 0 rgba(34,147,139,0.12);
-        text-align: center;
-        color: var(--ncc-teal);
-      }
-      .progress-bar {
-        width: 260px;
-        height: 20px;
-        margin: 1rem auto 0 auto;
-        background: linear-gradient(90deg, var(--bg-gray), #f7fafc 62%);
-        border-radius: 10px;
-        overflow: hidden;
-        border: 1px solid var(--ncc-blue);
-      }
-      .progress-fill {
-        height: 100%;
-        background: linear-gradient(90deg, var(--ncc-teal), var(--ncc-gold) 80%);
-        transition: width 0.3s;
-        border-radius: 10px;
-      }
-
-      /* --- Responsive --- */
-      @media (max-width: 900px) {
-        .main-content { max-width: 98vw; padding: 0; }
-        .input-analysis-container { padding: 1.3rem;}
-        .results-section { gap: 1.3rem;}
-        .results-section, .checkbox-grid { grid-template-columns: 1fr!important; }
-      }
-      @media (max-width: 740px) {
-        .header-title { font-size: 1.15rem; margin-right: 0;}
-        .ncc-text { font-size: 1.04rem;}
-        .app-header { padding: 1rem 0.7rem;}
-        .results-section { grid-template-columns: 1fr;}
-        .section-title { font-size: 1.13rem;}
-        .input-analysis-container { padding: 0.65rem;}
-      }
-      `}
-      </style>
-      
-      {/* Header */}
-      <header className="app-header">
-        <div className="header-logo">
-          <img src="/ncc_logo.png" alt="NCC Logo" />
-          <span className="ncc-text">
-            <span className="ncc-red">NCC </span>
-            <span className="ncc-sky">CADET </span>
-            <span className="ncc-blue">CORPS</span>
+    <div className="ops-dashboard" id="dashboard">
+      <aside className="ops-sidebar">
+        <a
+          href="#dashboard"
+          className="ops-brand"
+          aria-label="NCC Drill Analyzer home"
+        >
+          <span className="ops-brand-mark">
+            <img src="/ncc_logo.png" alt="" />
           </span>
-        </div>
-        <h1 className="header-title">NCC DRILL ANALYZER</h1>
-        <div className="header-logo">
-          <img src="/ncc_unity.png" alt="NCC Unity Logo" />
-        </div>
-      </header>
-      <div className="header-line"></div>
-      
-      <main className="main-content">
-        <div className="input-analysis-container">
-          <h2 className="section-title" style={{ marginTop: 0 }}>Select Analysis Mode</h2>
-          <div className="mode-selection">
-              <button 
-                  className={`mode-button ${!isLiveMode ? 'active' : ''}`}
-                  onClick={() => {
-                      stopLiveStream(); // Stop live stream if Upload is clicked
-                      setIsLiveMode(false); // Explicitly set mode
-                      setFeedback("Mode set to Upload. Please select a video file.");
-                  }}
-              >
-                  Upload Video
-              </button>
-              <button 
-                  className={`mode-button ${isLiveMode ? 'active' : ''}`}
-                  onClick={() => {
-                      if (isLiveMode) {
-                          stopLiveStream(); // Stop if already live
-                      } else {
-                          startLiveStream(); // Start if not live
-                      }
-                  }}
-              >
-                  {isLiveMode ? 'Turn Off Camera' : 'Start Live Drill'}
-              </button>
-          </div>
-          
-          <hr style={{border: 0, borderTop: '1px solid var(--border-color)', margin: '1.5rem 0'}} />
+          <span className="ops-brand-name">
+            NCC DRILL
+            <br />
+            ANALYZER
+          </span>
+        </a>
 
-          {/* Conditional Input based on mode */}
-          {!isLiveMode ? (
-              // Upload Mode
-              <div className="analyze-section">
-                  <input type="file" accept="video/mp4,video/webm" onChange={handleFileChange} disabled={loading} />
-                  <button onClick={() => handleAnalyze(null)} disabled={loading || !file || selectedCheckpoints.length === 0}>
-                      Analyze Uploaded Video
-                  </button>
-                  <p className="hint">{file ? `Video Selected: ${file.name}` : 'No Video Selected'}</p>
-              </div>
-          ) : (
-              // Live Mode (Local/Virtual Webcam with Recording)
-              <div className="live-section">
-                  {/* Webcam Feed */}
-                  <video 
-                    ref={videoRef} 
-                    autoPlay 
-                    playsInline 
-                    muted 
-                    style={{ 
-                      width: '100%', 
-                      maxWidth: '600px', 
-                      borderRadius: '8px', 
-                      border: '1px solid var(--border-color)', 
-                      backgroundColor: '#e5e7eb', // Light gray background
-                      aspectRatio: '16 / 9',
-                      marginTop: '1rem'
-                    }}
-                  ></video>
-                  
-                  {/* 🚨 NEW: Swappable Record/Stop button */}
-                  {!isRecording ? (
-                    <button 
-                      onClick={handleStartRecording} 
-                      disabled={loading || selectedCheckpoints.length === 0 || !streamRef.current || !!cameraError}
-                    >
-                      Start Recording
-                    </button>
-                  ) : (
-                    <button 
-                      onClick={handleStopRecording} 
-                      disabled={loading}
-                      className="record-button" // Apply red style
-                    >
-                      Stop & Analyze
-                    </button>
-                  )}
-                  
-                  <p className="hint">
-                      {/* Display enumerated devices for debugging */}
-                      {availableDevices.length > 0 && availableDevices.map(d => d.kind === 'videoinput' && d.label ? `[Found: ${d.label}] ` : '').join('')}
-                      {cameraError ? `Camera Setup Error: ${cameraError}` : "Click 'Start Recording' to begin."}
-                  </p>
-              </div>
-          )}
-        </div>
-        
-        <h2 className="section-title">Choose Command to be Analyzed</h2>
-        <div className="checkbox-grid">
-          {DRILL_CHECKPOINTS.map(d => (
-            <label key={d.value} className="checkbox-label">
-              <input type="checkbox" value={d.value} onChange={handleCheckpointChange} disabled={loading || isRecording} />
-              {d.label}
-            </label>
-          ))}
-        </div>
-
-        {/* Loading Overlay */}
-        {loading && (
-          <div className="loading-overlay">
-            <div className="loading-box">
-              <p>{isRecording ? 'Recording...' : `Analyzing: ${Math.min(progress, 100)}%`}</p>
-              <div className="progress-bar">
-                <div className="progress-fill" style={{ width: `${Math.min(progress, 100)}%` }}></div>
-              </div>
+        <nav className="ops-nav" aria-label="Workspace navigation">
+          <a className="ops-nav-link active" href="#dashboard">
+            <Grid2X2 size={16} /> Dashboard
+          </a>
+          <div className="ops-nav-group" id="drill-selection">
+            <a className="ops-nav-link" href="#drill-list">
+              <Activity size={16} /> Select Drill{" "}
+              <ChevronDown className="ops-nav-chevron" size={14} />
+            </a>
+            <div className="ops-drill-nav" id="drill-list">
+              {visibleDrills.length ? (
+                visibleDrills.map((drill) => (
+                  <label className="ops-drill-link" key={drill.value}>
+                    <input
+                      type="checkbox"
+                      checked={selectedDrills.includes(drill.value)}
+                      onChange={() => toggleDrill(drill.value)}
+                      disabled={loading || recording}
+                    />
+                    <span>{drill.label}</span>
+                    {selectedDrills.includes(drill.value) && (
+                      <Check size={13} />
+                    )}
+                  </label>
+                ))
+              ) : (
+                <span className="ops-search-empty">No drills found</span>
+              )}
             </div>
           </div>
-        )}
+          <a className="ops-nav-link" href="#live-analysis">
+            <Camera size={16} /> Live Analysis
+          </a>
+          <a className="ops-nav-link" href="#performance-report">
+            <ClipboardList size={16} /> Performance History
+          </a>
+          <button
+            className="ops-nav-link ops-nav-button"
+            type="button"
+            onClick={() => setAudioPrompts((enabled) => !enabled)}
+          >
+            <Volume2 size={16} /> Audio Feedback Settings{" "}
+            <span
+              className={`ops-audio-status ${audioPrompts ? "enabled" : "disabled"}`}
+            >
+              {audioPrompts ? "ON" : "OFF"}
+            </span>
+          </button>
+          <a className="ops-nav-link" href="#about">
+            <Info size={16} /> About NCC Innovation
+            <br /> Camp
+          </a>
+        </nav>
 
-        {/* Results */}
-        <div ref={resultsRef} className="results-section">
-          <div className="visual-feedback">
-            <h2 className="section-title" style={{ margin: 0, textAlign: 'left' }}>Visual Feedback:</h2>
-            {imageSource ? 
-              <img src={imageSource} alt="Annotated Drill" /> : 
-              <p style={{ marginTop: '1rem', color: 'var(--text-light)' }}>No image generated.</p>
-            }
+        <div className="ops-sidebar-bottom">
+          <div className="ops-competition">
+            <span className="ops-laurel">❧</span>
+            <span>
+              <strong>TOP 10</strong>
+              <small>
+                INTER-DIRECTORATE
+                <br />
+                COMPETITION
+              </small>
+              <b>2026</b>
+            </span>
+            <span className="ops-laurel right">❧</span>
           </div>
-          <div className="analysis-report">
-            <h2 className="section-title" style={{ margin: 0, textAlign: 'left' }}>Analysis Report:</h2>
-            <pre>{feedback}</pre>
-            {feedback && feedback.startsWith('JAI HIND') && ( // Only show button if analysis was successful
+          <span className="ops-campus">UNITY · DISCIPLINE · SERVICE</span>
+        </div>
+      </aside>
+
+      <div className="ops-main">
+        <header className="ops-topbar">
+          <a
+            className="ops-app-switch"
+            href="#dashboard"
+            aria-label="Dashboard"
+          >
+            <Grid2X2 size={17} />
+          </a>
+          <label className="ops-search">
+            <Search size={16} />
+            <input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search drills"
+              aria-label="Search drills"
+            />
+            {searchQuery && (
               <button
-                onClick={() => playVoiceReport(feedback)}
-                disabled={voiceLoading}
+                type="button"
+                aria-label="Clear search"
+                onClick={() => setSearchQuery("")}
               >
-                🔊 {voiceLoading ? 'Generating Voice...' : 'Play Voice Report'}
+                <X size={14} />
               </button>
             )}
+          </label>
+          <div className="ops-topbar-spacer" />
+          <span className="ops-command-chip">
+            <span className="ops-status-dot" />{" "}
+            {cameraReady ? "CAMERA CONNECTED" : "TRAINING WORKSPACE"}
+          </span>
+          <button
+            className="ops-notification"
+            type="button"
+            aria-label="Notifications"
+          >
+            <Bell size={17} />
+            <i />
+          </button>
+        </header>
+
+        <main className="ops-content">
+          <div className="ops-mobile-title">
+            <div>
+              <span>
+                NCC <b>DRILL ANALYZER</b>
+              </span>
+              <h1>Live analysis</h1>
+            </div>
+            <Shield size={21} />
+          </div>
+          <section className="ops-mobile-drill-picker" aria-label="Select drills">
+            <span>SELECT DRILLS</span>
+            <div>
+              {visibleDrills.map((drill) => (
+                <button
+                  key={drill.value}
+                  type="button"
+                  aria-pressed={selectedDrills.includes(drill.value)}
+                  disabled={loading || recording}
+                  onClick={() => toggleDrill(drill.value)}
+                >
+                  {selectedDrills.includes(drill.value) && <Check size={12} />}
+                  {drill.label}
+                </button>
+              ))}
+            </div>
+          </section>
+          <section className="ops-workspace-grid">
+            <article className="ops-card ops-camera-card" id="live-analysis">
+              <header className="ops-card-header">
+                <div className="ops-card-heading">
+                  <h2>
+                    {mode === "live" ? "Live Analysis" : "Video Analysis"}
+                  </h2>
+                  <span className="ops-card-subtitle">
+                    {mode === "live"
+                      ? "Capture your drill in real time"
+                      : "Upload a recording for review"}
+                  </span>
+                </div>
+                <div className="ops-card-actions">
+                  <div
+                    className="ops-mode-switch"
+                    role="group"
+                    aria-label="Choose analysis source"
+                  >
+                    <button
+                      className={mode === "live" ? "selected" : ""}
+                      onClick={() => switchMode("live")}
+                      type="button"
+                    >
+                      <Video size={14} /> Live
+                    </button>
+                    <button
+                      className={mode === "upload" ? "selected" : ""}
+                      onClick={() => switchMode("upload")}
+                      type="button"
+                    >
+                      Upload
+                    </button>
+                  </div>
+                  <button
+                    className="ops-icon-button"
+                    type="button"
+                    aria-label="Analysis options"
+                  >
+                    <MoreHorizontal size={19} />
+                  </button>
+                </div>
+              </header>
+
+              <div
+                className={`ops-video-stage ${cameraReady && mode === "live" ? "camera-on" : ""}`}
+              >
+                {mode === "live" ? (
+                  <>
+                    <video
+                      ref={videoRef}
+                      className="ops-video"
+                      autoPlay
+                      playsInline
+                      muted
+                      aria-label="Live camera preview"
+                    />
+                    {!cameraReady && (
+                      <div className="ops-camera-placeholder">
+                        <span className="ops-camera-icon">
+                          <Camera size={28} />
+                        </span>
+                        <strong>
+                          {cameraError
+                            ? "Camera unavailable"
+                            : "Your camera view will appear here"}
+                        </strong>
+                        <span>
+                          {cameraError ||
+                            "Allow camera access when you're ready to begin."}
+                        </span>
+                        {cameraError ? (
+                          <button
+                            className="ops-enable-camera"
+                            type="button"
+                            disabled={loading}
+                            onClick={startCamera}
+                          >
+                            Try again <ChevronRight size={14} />
+                          </button>
+                        ) : (
+                          <button
+                            className="ops-enable-camera"
+                            type="button"
+                            disabled={loading}
+                            onClick={startCamera}
+                          >
+                            Enable camera <ChevronRight size={14} />
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {cameraReady && (
+                      <div
+                        className={`ops-live-badge ${recording ? "is-recording" : ""}`}
+                      >
+                        <span />
+                        {recording ? "REC" : "LIVE"}
+                      </div>
+                    )}
+                    <div className="ops-video-caption">
+                      <span className="ops-caption-light" />
+                      {recording
+                        ? "RECORDING DRILL"
+                        : cameraReady
+                          ? "CAMERA PREVIEW"
+                          : "LIVE ANALYSIS"}
+                      <span className="ops-caption-message">
+                        {recording
+                          ? "Perform your selected drill"
+                          : cameraReady
+                            ? "Ready when you are"
+                            : "Camera is off"}
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <div
+                    className={`ops-upload-stage ${file ? "has-file" : ""} ${dragging ? "dragging" : ""}`}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      setDragging(true);
+                    }}
+                    onDragLeave={(event) => {
+                      if (!event.currentTarget.contains(event.relatedTarget)) {
+                        setDragging(false);
+                      }
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      setDragging(false);
+                      selectFile(event.dataTransfer.files[0]);
+                    }}
+                  >
+                    {filePreviewUrl ? (
+                      <video
+                        className="ops-upload-preview"
+                        src={filePreviewUrl}
+                        controls
+                        playsInline
+                      />
+                    ) : (
+                      <div className="ops-upload-prompt">
+                        <span className="ops-camera-icon">
+                          <Video size={27} />
+                        </span>
+                        <strong>
+                          {file ? file.name : "Choose a training video"}
+                        </strong>
+                        <span>
+                          MP4 or WebM · Use a clear, full-body recording
+                        </span>
+                        <button
+                          className="ops-enable-camera"
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={loading}
+                        >
+                          {file ? "Choose another video" : "Browse files"}{" "}
+                          <ChevronRight size={14} />
+                        </button>
+                      </div>
+                    )}
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="video/mp4,video/webm,.mp4,.webm"
+                      onChange={(event) => selectFile(event.target.files[0])}
+                      disabled={loading}
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="ops-camera-controls">
+                {mode === "live" ? (
+                  <>
+                    <div className="ops-capture-info">
+                      <span
+                        className={`ops-capture-indicator ${cameraReady ? "online" : ""}`}
+                      />
+                      <div>
+                        <strong>
+                          {recording
+                            ? "Recording in progress"
+                            : cameraReady
+                              ? "Camera ready"
+                              : "Camera not connected"}
+                        </strong>
+                        <small>
+                          {selectedDrills.length
+                            ? `${selectedDrills.length} drill${selectedDrills.length === 1 ? "" : "s"} selected`
+                            : "Select a drill from the sidebar"}
+                        </small>
+                      </div>
+                    </div>
+                    {!cameraReady ? (
+                      <button
+                        type="button"
+                        className="ops-primary-button"
+                        disabled={loading}
+                        onClick={startCamera}
+                      >
+                        <Camera size={15} /> Start camera
+                      </button>
+                    ) : recording ? (
+                      <button
+                        type="button"
+                        className="ops-primary-button stop"
+                        onClick={() => recorderRef.current?.stop()}
+                      >
+                        <Square size={14} fill="currentColor" /> Stop & analyze
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="ops-primary-button"
+                        disabled={!selectedDrills.length || loading}
+                        onClick={startRecording}
+                      >
+                        <span className="ops-button-record-dot" /> Start
+                        recording
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div className="ops-capture-info">
+                      <span
+                        className={`ops-capture-indicator ${file ? "online" : ""}`}
+                      />
+                      <div>
+                        <strong>
+                          {file ? file.name : "No video selected"}
+                        </strong>
+                        <small>
+                          {file
+                            ? "Video ready for analysis"
+                            : "Select a video file to continue"}
+                        </small>
+                      </div>
+                    </div>
+                    <div className="ops-upload-actions">
+                      <button
+                        type="button"
+                        className="ops-secondary-button"
+                        disabled={loading}
+                        onClick={() => fileInputRef.current?.click()}
+                      >
+                        Browse files
+                      </button>
+                      <button
+                        type="button"
+                        className="ops-primary-button"
+                        disabled={!file || !selectedDrills.length || loading}
+                        onClick={() => analyze(file)}
+                      >
+                        {loading ? (
+                          <LoaderCircle size={15} className="spin" />
+                        ) : (
+                          <Activity size={15} />
+                        )}{" "}
+                        Analyze video
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+              {inputError && (
+                <p className="ops-inline-error" role="alert">
+                  {inputError}
+                </p>
+              )}
+              {loading && (
+                <div className="ops-analysis-progress">
+                  <LoaderCircle size={15} className="spin" /> Reviewing your
+                  drill…
+                </div>
+              )}
+            </article>
+
+            <aside className="ops-right-column">
+              <section
+                className="ops-card ops-metrics-card"
+                aria-label="Real-time session metrics"
+              >
+                <header className="ops-card-header">
+                  <div className="ops-card-heading">
+                    <h2>Real-time Metrics</h2>
+                    <span className="ops-card-subtitle">Session status</span>
+                  </div>
+                  <Activity size={17} className="ops-muted-icon" />
+                </header>
+                <div className="ops-metric-grid">
+                  <div className="ops-metric">
+                    <div className={`ops-gauge ${cameraReady ? "active" : ""}`}>
+                      <span>{cameraReady ? "ON" : "OFF"}</span>
+                    </div>
+                    <strong>Camera</strong>
+                    <small>{cameraReady ? "Connected" : "Standby"}</small>
+                  </div>
+                  <div className="ops-metric">
+                    <div
+                      className={`ops-gauge ${selectedDrills.length ? "active" : ""}`}
+                    >
+                      <span>
+                        {selectedDrills.length}
+                        <i>/4</i>
+                      </span>
+                    </div>
+                    <strong>Drills</strong>
+                    <small>
+                      {selectedDrills.length ? "Selected" : "Choose a drill"}
+                    </small>
+                  </div>
+                  <div className="ops-metric">
+                    <div
+                      className={`ops-gauge ${recording ? "recording" : ""}`}
+                    >
+                      <span>{recording ? "REC" : "READY"}</span>
+                    </div>
+                    <strong>Session</strong>
+                    <small>{recording ? "Recording" : "Awaiting start"}</small>
+                  </div>
+                </div>
+                <div className="ops-metrics-foot">
+                  <span className="ops-status-dot" /> Live session indicators
+                </div>
+              </section>
+
+              <section className="ops-card ops-coach-card">
+                <header className="ops-card-header">
+                  <div className="ops-card-heading">
+                    <h2>AI Voice Coach</h2>
+                    <span className="ops-card-subtitle">Amazon Polly</span>
+                  </div>
+                  <AudioLines size={18} className="ops-muted-icon" />
+                </header>
+                <div className="ops-waveform" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                </div>
+                <div className="ops-coach-quote">
+                  {feedback
+                    ? feedback.slice(0, 154) +
+                      (feedback.length > 154 ? "…" : "")
+                    : "Your spoken drill feedback will appear here after analysis."}
+                </div>
+                <button
+                  type="button"
+                  className="ops-coach-play"
+                  onClick={() => playVoiceReport()}
+                  disabled={
+                    !feedback ||
+                    !audioPrompts ||
+                    voiceLoading ||
+                    !feedback.startsWith("JAI HIND")
+                  }
+                >
+                  {voiceLoading ? (
+                    <LoaderCircle size={14} className="spin" />
+                  ) : (
+                    <Mic2 size={14} />
+                  )}
+                  {voiceLoading
+                    ? "Preparing voice feedback"
+                    : "Play voice feedback"}
+                  <ChevronRight size={14} />
+                </button>
+                {voiceError && (
+                  <p className="ops-inline-error" role="alert">
+                    {voiceError}
+                  </p>
+                )}
+                <div className="ops-audio-toggle-row">
+                  <span>
+                    {audioPrompts ? (
+                      <Volume2 size={14} />
+                    ) : (
+                      <VolumeX size={14} />
+                    )}{" "}
+                    Audio prompts
+                  </span>
+                  <button
+                    className={`ops-toggle ${audioPrompts ? "on" : ""}`}
+                    role="switch"
+                    aria-checked={audioPrompts}
+                    aria-label="Toggle audio prompts"
+                    onClick={() => setAudioPrompts((enabled) => !enabled)}
+                    type="button"
+                  >
+                    <span />
+                  </button>
+                  <small>{audioPrompts ? "ON" : "OFF"}</small>
+                </div>
+              </section>
+
+              <section className="ops-card ops-selected-card">
+                <header className="ops-card-header">
+                  <div className="ops-card-heading">
+                    <h2>Selected Drills</h2>
+                    <span className="ops-card-subtitle">
+                      Included in this analysis
+                    </span>
+                  </div>
+                  <Settings2 size={16} className="ops-muted-icon" />
+                </header>
+                {selectedDrills.length ? (
+                  <div className="ops-selected-list">
+                    {DRILLS.filter((drill) =>
+                      selectedDrills.includes(drill.value),
+                    ).map((drill) => (
+                      <div key={drill.value}>
+                        <span>{drill.short}</span>
+                        {drill.label}
+                        <Check size={13} />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="ops-no-drills">
+                    Choose a drill from the left navigation.
+                  </p>
+                )}
+              </section>
+            </aside>
+          </section>
+
+          <section
+            className="ops-report-card"
+            id="performance-report"
+            aria-live="polite"
+          >
+            <header className="ops-card-header">
+              <div className="ops-card-heading">
+                <h2>Performance Report</h2>
+                <span className="ops-card-subtitle">Your latest analysis</span>
+              </div>
+              <ClipboardList size={17} className="ops-muted-icon" />
+            </header>
+            {feedback ? (
+              <div className="ops-report-content">
+                {imageSource && (
+                  <img src={imageSource} alt="Annotated drill analysis" />
+                )}
+                <pre>{feedback}</pre>
+              </div>
+            ) : (
+              <div className="ops-empty-report">
+                <ClipboardList size={16} />
+                <span>Your analysis will appear here after a drill.</span>
+              </div>
+            )}
+          </section>
+
+          <footer className="ops-footer" id="about">
+            <span>
+              NCC DRILL ANALYZER <i>·</i> NCC INNOVATION CAMP
+            </span>
+            <span>UNITY · DISCIPLINE · SERVICE</span>
+          </footer>
+        </main>
+      </div>
+      {loading && (
+        <div className="loading-overlay" role="status">
+          <div className="loading-card">
+            <LoaderCircle className="spin" size={29} />
+            <h3>Analyzing your drill</h3>
+            <p>We're reviewing your performance. This may take a moment.</p>
           </div>
         </div>
-      </main>
-
-      <footer className="app-footer">
-        © 2025 NCC - CTUNIVERSITY. All Rights Reserved.
-      </footer>
+      )}
     </div>
   );
 }
 
 export default App;
-
