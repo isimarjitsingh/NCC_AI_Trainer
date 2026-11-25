@@ -117,7 +117,7 @@ export default function About() {
           <div className="about-container">
             <div className="about-card about-card-full">
               <div className="about-card-header">
-                <div className="about-card-icon" style={{ color: "#1565C0" }}>
+                <div className="about-card-icon" style={{ color: "#1ABC9C" }}>
                   <Shield size={28} />
                 </div>
                 <h3>Your Entry &amp; Role</h3>

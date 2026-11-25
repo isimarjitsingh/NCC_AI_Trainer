@@ -16,3 +16,17 @@ services:
         value: production
       - key: PYTHON_VERSION
         value: 3.11.9
+      - key: CORS_ORIGINS
+        sync: false
+
+  - type: web
+    name: ncc-ai-trainer-frontend
+    env: node
+    region: singapore
+    buildCommand: "cd Frontend && npm install && npm run build"
+    startCommand: "npx serve -s dist -l 3000"
+    envVars:
+      - key: VITE_API_URL
+        sync: false
+      - key: NODE_VERSION
+        value: 18.x

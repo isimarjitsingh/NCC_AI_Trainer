@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
+import "./App.css";
 import {
   Activity,
   AudioLines,
@@ -323,10 +325,10 @@ function App() {
               {audioPrompts ? "ON" : "OFF"}
             </span>
           </button>
-          <a className="ops-nav-link" href="#about">
+          <Link className="ops-nav-link" to="/about">
             <Info size={16} /> About NCC Innovation
             <br /> Camp
-          </a>
+          </Link>
         </nav>
 
         <div className="ops-sidebar-bottom">
@@ -965,77 +967,6 @@ function App() {
                 ))}
               </div>
             )}
-          </section>
-
-          {/* --- ABOUT NCC CAMP SECTION --- */}
-          <section className="ops-report-card" id="about" aria-label="About NCC Camp">
-            <header className="ops-card-header">
-              <div className="ops-card-heading">
-                <h2>About NCC Innovation Camp</h2>
-                <span className="ops-card-subtitle">
-                  NCC Innovation, Incubation and Cultural Camp
-                </span>
-              </div>
-              <Info size={17} className="ops-muted-icon" />
-            </header>
-            <div className="ops-about-content">
-              <div className="ops-about-grid">
-                <div className="ops-about-card">
-                  <h3>Camp Overview</h3>
-                  <p>
-                    <strong>Event:</strong> NCC Innovation, Incubation and Cultural Camp (Idea &amp; Innovation Competition)
-                  </p>
-                  <p>
-                    <strong>Host &amp; Location:</strong> Vijayawada, Andhra Pradesh (organized under the aegis of DG NCC by the AP&amp;T Directorate)
-                  </p>
-                  <p>
-                    <strong>Timeline:</strong> October 2026 (following your Directorate-level selection round)
-                  </p>
-                </div>
-                <div className="ops-about-card">
-                  <h3>Competition Scale</h3>
-                  <p>
-                    <strong>Participating Directorates:</strong> 19
-                  </p>
-                  <p>
-                    <strong>Teams per Directorate:</strong> 5
-                  </p>
-                  <p>
-                    <strong>Total Competing Teams:</strong> 95 teams nationally
-                  </p>
-                  <p>
-                    <strong>Your Result:</strong> Top 10 nationally (top ~10.5% nationwide)
-                  </p>
-                </div>
-              </div>
-              <div className="ops-about-card full-width">
-                <h3>Your Entry &amp; Role</h3>
-                <p>
-                  <strong>Rank:</strong> Under Officer (UO)
-                </p>
-                <p>
-                  <strong>Directorate:</strong> Punjab, Haryana, Himachal Pradesh &amp; Chandigarh Directorate
-                </p>
-                <p>
-                  <strong>Institution:</strong> CT University
-                </p>
-                <p>
-                  <strong>Project:</strong> NCC Drill Analyzer — an AI-powered computer vision posture and drill evaluation system built using MediaPipe Pose, OpenCV, Flask, React, and Amazon Polly for real-time voice-guided feedback.
-                </p>
-                <p>
-                  <strong>Key Evaluations:</strong> Demonstrated live webcam and video-upload diagnostics for core cadet movements (salutes, high leg marching, attention, and turns).
-                </p>
-              </div>
-              <div className="ops-about-card full-width">
-                <h3>Camp Focus &amp; Format</h3>
-                <p>
-                  <strong>Objective:</strong> Aligned with the Viksit Bharat @ 2047 vision to foster defence tech, practical problem-solving, and startup/innovation awareness among cadets.
-                </p>
-                <p>
-                  <strong>Evaluation Rounds:</strong> Concept note submissions, prototype demonstrations, visual presentations, and live pitching to a judging panel evaluating societal/defence utility, technical execution, and scalability.
-                </p>
-              </div>
-            </div>
           </section>
 
           <footer className="ops-footer">
